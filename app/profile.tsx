@@ -2,9 +2,10 @@ import { theme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
 import React from 'react';
-import { Dimensions, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Stop } from 'react-native-svg';
+import { useLogout } from '@/src/hooks';
 
 const { width } = Dimensions.get('window');
 
@@ -26,6 +27,7 @@ const MENU_ITEMS: MenuItem[] = [
 
 export default function ProfileScreen() {
     const insets = useSafeAreaInsets();
+    const { mutate: logout, isPending: isLoggingOut } = useLogout();
 
     const renderHeaderBackground = () => (
         <View style={[styles.headerBgContainer, { height: 260 + insets.top }]}>
@@ -56,8 +58,35 @@ export default function ProfileScreen() {
         } else if (id === 'help') {
             router.push('/help');
         } else if (id === 'logout') {
-            // Add logout logic here
+            handleLogout();
         }
+    };
+
+    const handleLogout = () => {
+        Alert.alert(
+            'Logout',
+            'Are you sure you want to logout?',
+            [
+                {
+                    text: 'Cancel',
+                    style: 'cancel',
+                },
+                {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: () => {
+                        logout(undefined, {
+                            onSuccess: () => {
+                                router.replace('/login');
+                            },
+                            onError: (error: any) => {
+                                Alert.alert('Error', error.message || 'Failed to logout');
+                            },
+                        });
+                    },
+                },
+            ]
+        );
     };
 
     return (

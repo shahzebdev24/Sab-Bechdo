@@ -1,4 +1,16 @@
+/**
+ * Firebase Configuration
+ * Initializes Firebase app and exports auth, db instances
+ */
+
 import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, initializeAuth } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+
+// getReactNativePersistence is available at runtime but not typed correctly
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { getReactNativePersistence } = require('firebase/auth');
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -26,5 +38,11 @@ export function getFirebaseApp(): FirebaseApp {
   return appInstance;
 }
 
+// Use persistent auth on native (AsyncStorage), default auth on web
+export const auth =
+  Platform.OS === 'web'
+    ? getAuth(getFirebaseApp())
+    : initializeAuth(getFirebaseApp(), {
+        persistence: getReactNativePersistence(AsyncStorage),
+      });
 export const db = getFirestore(getFirebaseApp());
-

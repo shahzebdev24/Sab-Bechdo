@@ -1,6 +1,6 @@
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 
-import { db } from '@/lib/firebase';
+import { db } from '@/src/config/firebase';
 
 export type LocationPayload = {
   latitude: number;

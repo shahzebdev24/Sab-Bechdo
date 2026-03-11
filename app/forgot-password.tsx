@@ -2,6 +2,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
 import React, { useState } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     KeyboardAvoidingView,
     Platform,
     StyleSheet,
@@ -13,16 +15,30 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
+import { useForgotPassword } from '@/src/hooks';
 
 export default function ForgotPasswordScreen() {
     const [email, setEmail] = useState('');
     const [isSent, setIsSent] = useState(false);
+    const { mutate: forgotPassword, isPending } = useForgotPassword();
 
     const handleReset = () => {
-        if (email.length > 0) {
-            setIsSent(true);
-            // Logic for sending reset email would go here
+        if (!email) {
+            Alert.alert('Error', 'Please enter your email address');
+            return;
         }
+
+        forgotPassword(
+            { email },
+            {
+                onSuccess: () => {
+                    setIsSent(true);
+                },
+                onError: (error: any) => {
+                    Alert.alert('Error', error.message || 'Could not send reset email');
+                },
+            }
+        );
     };
 
     return (
@@ -68,11 +84,15 @@ export default function ForgotPasswordScreen() {
                         </View>
 
                         <TouchableOpacity
-                            style={[styles.submitButton, !email && styles.disabledButton]}
+                            style={[styles.submitButton, (!email || isPending) && styles.disabledButton]}
                             onPress={handleReset}
-                            disabled={!email}
+                            disabled={!email || isPending}
                         >
-                            <Text style={styles.submitButtonText}>Send Reset Link</Text>
+                            {isPending ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.submitButtonText}>Send Reset Link</Text>
+                            )}
                         </TouchableOpacity>
                     </>
                 ) : (

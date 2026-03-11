@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
 import React from 'react';
 import {
+    Alert,
     ScrollView,
     StyleSheet,
     Switch,
@@ -12,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
+import { useLogout } from '@/src/hooks';
 
 type SettingItemProps = {
     icon: keyof typeof Ionicons.glyphMap;
@@ -71,6 +73,34 @@ const SectionHeader = ({ title }: { title: string }) => (
 export default function SettingsScreen() {
     const [notifications, setNotifications] = React.useState(true);
     const [darkMode, setDarkMode] = React.useState(false);
+    const { mutate: logout, isPending: isLoggingOut } = useLogout();
+
+    const handleLogout = () => {
+        Alert.alert(
+            'Logout',
+            'Are you sure you want to logout?',
+            [
+                {
+                    text: 'Cancel',
+                    style: 'cancel',
+                },
+                {
+                    text: 'Logout',
+                    style: 'destructive',
+                    onPress: () => {
+                        logout(undefined, {
+                            onSuccess: () => {
+                                router.replace('/login');
+                            },
+                            onError: (error: any) => {
+                                Alert.alert('Error', error.message || 'Failed to logout');
+                            },
+                        });
+                    },
+                },
+            ]
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -104,6 +134,7 @@ export default function SettingsScreen() {
                     <SettingItem
                         icon="lock-closed-outline"
                         label="Change Password"
+                        onPress={() => router.push('/change-password')}
                     />
                 </View>
 
@@ -151,9 +182,16 @@ export default function SettingsScreen() {
                     />
                 </View>
 
-                <TouchableOpacity style={styles.logoutButton} activeOpacity={0.8}>
+                <TouchableOpacity 
+                    style={styles.logoutButton} 
+                    activeOpacity={0.8}
+                    onPress={handleLogout}
+                    disabled={isLoggingOut}
+                >
                     <Ionicons name="log-out-outline" size={22} color="#EF4444" />
-                    <Text style={styles.logoutText}>Log Out</Text>
+                    <Text style={styles.logoutText}>
+                        {isLoggingOut ? 'Logging out...' : 'Log Out'}
+                    </Text>
                 </TouchableOpacity>
 
                 <Text style={styles.footerText}>Joined since October 2023</Text>

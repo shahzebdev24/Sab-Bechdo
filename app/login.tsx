@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+    ActivityIndicator,
+    Alert,
     ImageBackground,
     KeyboardAvoidingView,
     Platform,
@@ -13,8 +15,8 @@ import {
     View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
 import { theme } from '@/theme';
+import { useLogin, useSignup, useFirebaseAuth } from '@/src/hooks';
 
 export default function LoginScreen() {
     const insets = useSafeAreaInsets();
@@ -23,10 +25,131 @@ export default function LoginScreen() {
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
 
+    const { mutate: login, isPending: isLoggingIn } = useLogin();
+    const { mutate: signup, isPending: isSigningUp } = useSignup();
+    const { mutate: firebaseAuth, isPending: isFirebaseLoading } = useFirebaseAuth();
+
+    // Hardcoding Expo Proxy Redirect URI as requested by user to force Expo Go into using 
+    // it instead of the local IP address (Make sure this exactly matches what you put in Facebook console)
+    // const redirectUri = 'https://auth.expo.io/@muhammadhasan21159/SabBechdo';
+
+    /* Facebook login temporary disabled
+    const [fbRequest, fbResponse, fbPromptAsync] = Facebook.useAuthRequest({
+        clientId: process.env.EXPO_PUBLIC_FACEBOOK_APP_ID,
+        redirectUri,
+        scopes: ['public_profile'],
+        extraParams: { display: 'popup', auth_type: 'rerequest' },
+    });
+
+    useEffect(() => {
+        if (fbRequest) {
+            console.log('--- Facebook Auth Request Triggered ---');
+            console.log('1. Generated Redirect URI:', redirectUri);
+            console.log('2. Request URL being sent to Facebook:', fbRequest.url);
+            console.log('3. Client ID Used:', fbRequest.clientId);
+            console.log('-----------------------------------------');
+        }
+    }, [fbRequest, redirectUri]);
+
+    useEffect(() => {
+        if (fbResponse?.type === 'success') {
+            const { access_token } = fbResponse.params;
+            if (access_token) {
+                console.log('Facebook ID Token received, signing in with Firebase...');
+                const credential = FacebookAuthProvider.credential(access_token);
+                
+                signInWithCredential(auth, credential)
+                    .then(async (userCredential) => {
+                        const firebaseIdToken = await userCredential.user.getIdToken();
+                        console.log('Firebase sign-in successful, authenticating with backend...');
+                        firebaseAuth(
+                            { token: firebaseIdToken },
+                            {
+                                onSuccess: () => {
+                                    console.log('Backend authentication successful!');
+                                    router.replace('/(tabs)');
+                                },
+                                onError: (error: any) => {
+                                    console.error('Backend authentication error:', error);
+                                    Alert.alert('Authentication Failed', error.message || 'Could not authenticate with Facebook');
+                                },
+                            }
+                        );
+                    })
+                    .catch((error) => {
+                        console.error('Firebase sign-in error:', error);
+                        Alert.alert('Authentication Failed', error.message || 'Could not sign in with Facebook');
+                    });
+            }
+        } else if (fbResponse?.type === 'error') {
+            console.error('Facebook Sign-In Error:', fbResponse.error);
+            Alert.alert('Error', `Facebook sign-in failed: ${fbResponse.error?.message || 'Unknown error'}`);
+        }
+    }, [fbResponse]);
+    */
+
+    // Google login functionality removed temporarily for testing Facebook login
+
     const handleAuth = () => {
-        // Navigate to main app after "login"
-        router.replace('/(tabs)');
+        if (!email || !password) {
+            Alert.alert('Error', 'Please fill in all fields');
+            return;
+        }
+
+        if (isLogin) {
+            login(
+                { email, password },
+                {
+                    onSuccess: () => {
+                        router.replace('/(tabs)');
+                    },
+                    onError: (error: any) => {
+                        Alert.alert('Login Failed', error.message || 'Invalid credentials');
+                    },
+                }
+            );
+        } else {
+            if (!name) {
+                Alert.alert('Error', 'Please enter your name');
+                return;
+            }
+            signup(
+                { name, email, password },
+                {
+                    onSuccess: () => {
+                        router.replace('/(tabs)');
+                    },
+                    onError: (error: any) => {
+                        Alert.alert('Signup Failed', error.message || 'Could not create account');
+                    },
+                }
+            );
+        }
     };
+
+    const handleSocialAuth = async (provider: 'google' | 'facebook' | 'apple') => {
+        if (provider === 'google') {
+            Alert.alert(
+                'Google Login',
+                'Google login is temporarily disabled. Please use Facebook or email/password.',
+                [{ text: 'OK' }]
+            );
+        } else if (provider === 'facebook') {
+            Alert.alert(
+                'Facebook Login',
+                'Facebook login is temporarily disabled.',
+                [{ text: 'OK' }]
+            );
+        } else if (provider === 'apple') {
+            Alert.alert(
+                'Apple Login',
+                'Apple login requires additional setup. Please use Google or email/password for now.',
+                [{ text: 'OK' }]
+            );
+        }
+    };
+
+    const isLoading = isLoggingIn || isSigningUp || isFirebaseLoading;
 
     return (
         <View style={styles.container}>
@@ -110,8 +233,16 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                         )}
 
-                        <TouchableOpacity style={styles.submitButton} onPress={handleAuth}>
-                            <Text style={styles.submitButtonText}>{isLogin ? 'Login' : 'Create Account'}</Text>
+                        <TouchableOpacity 
+                            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]} 
+                            onPress={handleAuth}
+                            disabled={isLoading}
+                        >
+                            {isLoading ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.submitButtonText}>{isLogin ? 'Login' : 'Create Account'}</Text>
+                            )}
                         </TouchableOpacity>
 
                         <View style={styles.socialDivider}>
@@ -121,13 +252,25 @@ export default function LoginScreen() {
                         </View>
 
                         <View style={styles.socialRow}>
-                            <TouchableOpacity style={styles.socialButton} onPress={handleAuth}>
+                            <TouchableOpacity 
+                                style={styles.socialButton} 
+                                onPress={() => handleSocialAuth('google')}
+                                disabled={isLoading}
+                            >
                                 <Ionicons name="logo-google" size={24} color="#DB4437" />
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.socialButton} onPress={handleAuth}>
+                            <TouchableOpacity 
+                                style={styles.socialButton} 
+                                onPress={() => handleSocialAuth('facebook')}
+                                disabled={isLoading}
+                            >
                                 <Ionicons name="logo-facebook" size={24} color="#4267B2" />
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.socialButton} onPress={handleAuth}>
+                            <TouchableOpacity 
+                                style={styles.socialButton} 
+                                onPress={() => handleSocialAuth('apple')}
+                                disabled={isLoading}
+                            >
                                 <Ionicons name="logo-apple" size={24} color="#000" />
                             </TouchableOpacity>
                         </View>
@@ -262,6 +405,9 @@ const styles = StyleSheet.create({
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 5 },
         elevation: 8,
+    },
+    submitButtonDisabled: {
+        opacity: 0.6,
     },
     submitButtonText: {
         color: '#fff',

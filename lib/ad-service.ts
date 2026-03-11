@@ -8,7 +8,7 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 
-import { db } from '@/lib/firebase';
+import { db } from '@/src/config/firebase';
 import type { LocationPayload } from '@/lib/location-service';
 
 export type AdInput = {
