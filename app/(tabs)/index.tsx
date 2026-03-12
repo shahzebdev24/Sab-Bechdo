@@ -9,11 +9,15 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Dimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { subscribeToAds, type AdRecord } from '@/lib/ad-service';
 import { theme } from '@/theme';
+import { useMe, useAdsList, useToggleWishlist } from '@/src/hooks';
+import { getAvatarUrl } from '@/src/utils/avatar';
+import type { Ad } from '@/src/types';
 
 type Category = {
   id: string;
@@ -37,94 +41,7 @@ const CATEGORIES: Category[] = [
   { id: 'electronics', label: 'Electronics', icon: 'tv-outline' },
 ];
 
-const DUMMY_LISTINGS: Listing[] = [
-  {
-    id: 'd1',
-    title: 'iPhone 12 - 64GB',
-    priceLabel: '₹18,500',
-    locationLabel: 'Mumbai - 2 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1605236453806-6ff36851218e?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd2',
-    title: 'Honda Civic 2018',
-    priceLabel: '₹5,20,000',
-    locationLabel: 'Delhi - 3 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1533473359331-01d898a3b5ce?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd3',
-    title: 'MacBook Air M1',
-    priceLabel: '₹55,000',
-    locationLabel: 'Bangalore - 5 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd4',
-    title: 'Sony PlayStation 5',
-    priceLabel: '₹42,000',
-    locationLabel: 'Pune - 1 day ago',
-    image: { uri: 'https://images.unsplash.com/photo-1606813907291-d86efa9b94db?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd5',
-    title: 'Samsung Galaxy S21',
-    priceLabel: '₹32,000',
-    locationLabel: 'Hyderabad - 4 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1610945415295-d9bbf067e59c?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd6',
-    title: 'Royal Enfield Classic 350',
-    priceLabel: '₹1,45,000',
-    locationLabel: 'Chennai - 2 days ago',
-    image: { uri: 'https://images.unsplash.com/photo-1558981403-c5f9899a28bc?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd7',
-    title: 'Dell XPS 13',
-    priceLabel: '₹75,000',
-    locationLabel: 'Gurgaon - 1 hr ago',
-    image: { uri: 'https://images.unsplash.com/photo-1593642632823-8f785ba67e45?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd8',
-    title: 'Canon EOS 200D',
-    priceLabel: '₹28,000',
-    locationLabel: 'Kolkata - 6 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1502920917128-1aa500764cbd?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd9',
-    title: 'iPad Pro 11"',
-    priceLabel: '₹65,000',
-    locationLabel: 'Ahmedabad - 3 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd10',
-    title: 'Nikon D5600',
-    priceLabel: '₹35,000',
-    locationLabel: 'Jaipur - 12 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1516035069371-29a1b244cc32?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd11',
-    title: 'Apple Watch Series 6',
-    priceLabel: '₹22,000',
-    locationLabel: 'Surat - 2 hrs ago',
-    image: { uri: 'https://images.unsplash.com/photo-1434493789847-2902a52dda8c?q=80&w=400&auto=format&fit=crop' },
-  },
-  {
-    id: 'd12',
-    title: 'Hyundai i20',
-    priceLabel: '₹4,50,000',
-    locationLabel: 'Lucknow - 1 day ago',
-    image: { uri: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0be2?q=80&w=400&auto=format&fit=crop' },
-  },
-];
-
-const HomeHeader = React.memo(({ searchQuery, setSearchQuery }: { searchQuery: string, setSearchQuery: (text: string) => void }) => {
+const HomeHeader = React.memo(({ searchQuery, setSearchQuery, userName, userAvatar }: { searchQuery: string, setSearchQuery: (text: string) => void, userName?: string, userAvatar?: string }) => {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const keywords = ['mobiles', 'cars', 'property', 'jobs', 'electronics'];
 
@@ -156,7 +73,7 @@ const HomeHeader = React.memo(({ searchQuery, setSearchQuery }: { searchQuery: s
             onPress={() => router.push('/profile')}
           >
             <Image
-              source={{ uri: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=100&auto=format&fit=crop' }}
+              source={{ uri: userAvatar || getAvatarUrl(userName || 'User', 100) }}
               style={styles.avatarImage}
             />
           </TouchableOpacity>
@@ -243,48 +160,56 @@ const { width } = Dimensions.get('window');
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
-  const [listings, setListings] = useState<Listing[]>(DUMMY_LISTINGS);
-  const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [togglingAdId, setTogglingAdId] = useState<string | null>(null);
+  
+  // Fetch current user for avatar
+  const { data: user } = useMe();
+  
+  // Fetch ads from backend
+  const { data: adsData, isLoading } = useAdsList({
+    page: 1,
+    limit: 20,
+    sort: 'recent',
+  });
+
+  // Wishlist toggle
+  const { toggle: toggleWishlist } = useToggleWishlist();
+
+  const listings: Listing[] = React.useMemo(() => {
+    if (!adsData?.ads) {
+      return [];
+    }
+    
+    return adsData.ads.map((ad: Ad) => ({
+      id: ad.id,
+      title: ad.title,
+      priceLabel: `Rs ${ad.price.toLocaleString('en-PK')}`,
+      locationLabel: ad.location?.address || 'Location',
+      image: (ad.photoUrls && ad.photoUrls.length > 0) ? { uri: ad.photoUrls[0] } : (ad.videoUrl ? { uri: ad.videoUrl } : null),
+    }));
+  }, [adsData]);
 
   const filteredListings = listings.filter((item) =>
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const toggleFavorite = (id: string) => {
-    setFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+  const toggleFavorite = async (id: string, isFavorite: boolean) => {
+    try {
+      setTogglingAdId(id);
+      await toggleWishlist(id, isFavorite);
+    } catch (error) {
+      console.error('Failed to toggle wishlist:', error);
+    } finally {
+      setTogglingAdId(null);
+    }
   };
 
-  useEffect(() => {
-    const formatAd = (ad: AdRecord): Listing => {
-      const priceLabel = `₨ ${ad.price.toLocaleString('en-PK')}`;
-      const locationLabel = ad.location?.address ?? 'Location';
-      const firstImage = ad.photoUrls?.[0] ? { uri: ad.photoUrls[0] } : null;
-      return {
-        id: ad.id,
-        title: ad.title || 'Untitled ad',
-        priceLabel,
-        locationLabel,
-        image: firstImage,
-      };
-    };
-
-    const unsubscribe = subscribeToAds((ads) => {
-      setListings([...ads.map(formatAd), ...DUMMY_LISTINGS]);
-    });
-    return unsubscribe;
-  }, []);
-
   const renderItem = ({ item }: { item: Listing }) => {
-    const isFavorite = favorites.has(item.id);
+    // Get isFavorite from backend data instead of local state
+    const ad = adsData?.ads.find((a: Ad) => a.id === item.id);
+    const isFavorite = ad?.isFavorite || false;
+    const isToggling = togglingAdId === item.id;
     return (
       <TouchableOpacity
         style={styles.card}
@@ -301,17 +226,31 @@ export default function HomeScreen() {
         })}
       >
         <View style={styles.imageContainer}>
-          {item.image && <Image source={item.image} style={styles.cardImage} />}
+          {item.image ? (
+            <Image 
+              source={item.image} 
+              style={styles.cardImage}
+            />
+          ) : (
+            <View style={[styles.cardImage, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}>
+              <Ionicons name="image-outline" size={48} color="#94A3B8" />
+            </View>
+          )}
           <TouchableOpacity
             style={styles.favoriteBadge}
-            onPress={() => toggleFavorite(item.id)}
+            onPress={() => toggleFavorite(item.id, isFavorite)}
             activeOpacity={0.7}
+            disabled={isToggling}
           >
-            <Ionicons
-              name={isFavorite ? "heart" : "heart-outline"}
-              size={18}
-              color={isFavorite ? '#F43F5E' : '#64748B'}
-            />
+            {isToggling ? (
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+            ) : (
+              <Ionicons
+                name={isFavorite ? "heart" : "heart-outline"}
+                size={18}
+                color={isFavorite ? '#F43F5E' : '#64748B'}
+              />
+            )}
           </TouchableOpacity>
         </View>
         <View style={styles.cardDetails}>
@@ -328,27 +267,38 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <FlatList
-        data={filteredListings}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.columnWrapper}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListHeaderComponent={<HomeHeader searchQuery={searchQuery} setSearchQuery={setSearchQuery} />}
-        renderItem={renderItem}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Ionicons name="search-outline" size={64} color="#CBD5E1" />
-            <Text style={styles.emptyText}>No items found for "{searchQuery}"</Text>
-          </View>
-        }
-      />
+      {isLoading && listings.length === 0 ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={{ marginTop: 16, color: theme.colors.textSecondary }}>Loading ads...</Text>
+        </View>
+      ) : (
+        <FlatList
+          key={`flatlist-${listings.length}`}
+          data={filteredListings}
+          keyExtractor={(item) => item.id}
+          numColumns={2}
+          columnWrapperStyle={styles.columnWrapper}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={<HomeHeader searchQuery={searchQuery} setSearchQuery={setSearchQuery} userName={user?.name} userAvatar={user?.avatarUrl} />}
+          renderItem={renderItem}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={10}
+          removeClippedSubviews={false}
+          extraData={listings}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Ionicons name="search-outline" size={64} color="#CBD5E1" />
+              <Text style={styles.emptyText}>No items found{searchQuery ? ` for "${searchQuery}"` : ''}</Text>
+            </View>
+          }
+        />
+      )}
     </View>
   );
 }
-
-import { Dimensions } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -573,10 +523,12 @@ const styles = StyleSheet.create({
     height: 140,
     width: '100%',
     position: 'relative',
+    backgroundColor: '#F1F5F9',
   },
   cardImage: {
     width: '100%',
     height: '100%',
+    backgroundColor: '#E2E8F0',
   },
   favoriteBadge: {
     position: 'absolute',

@@ -3,12 +3,18 @@
  * All types related to authentication
  */
 
+import { UserLocation } from './user.types';
+
 // User object
 export interface User {
   id: string;
   email: string;
   name: string;
   role: 'customer' | 'seller' | 'admin';
+  avatarUrl?: string;
+  username?: string;
+  phone?: string;
+  location?: UserLocation;
   linkedProviders: LinkedProvider[];
   isEmailVerified: boolean;
   isActive: boolean;

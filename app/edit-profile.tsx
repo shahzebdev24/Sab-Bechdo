@@ -1,10 +1,12 @@
 import { theme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, router } from 'expo-router';
-import React, { useState } from 'react';
-import { Dimensions, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { Dimensions, Image, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Path, Stop } from 'react-native-svg';
+import { useMe, useUpdateProfile, useAvatarUpload } from '@/src/hooks';
+import { getAvatarUrl } from '@/src/utils/avatar';
 
 const { width } = Dimensions.get('window');
 
@@ -34,11 +36,67 @@ const CustomInput = ({ label, value, onChangeText, showChevron = false }: InputP
 
 export default function EditProfileScreen() {
     const insets = useSafeAreaInsets();
+    
+    // Fetch current user data
+    const { data: user, isLoading } = useMe();
+    const updateProfile = useUpdateProfile();
+    const { uploadAvatar, isUploading: isUploadingAvatar } = useAvatarUpload();
 
-    const [fullName, setFullName] = useState('Jessica Parker');
-    const [username, setUsername] = useState('@jessica_89');
-    const [email, setEmail] = useState('jessica.parker@email.com');
-    const [location, setLocation] = useState('New York, NY');
+    const [fullName, setFullName] = useState('');
+    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
+    const [phone, setPhone] = useState('');
+    const [location, setLocation] = useState('');
+    const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined);
+
+    // Load user data when available
+    useEffect(() => {
+        if (user) {
+            setFullName(user.name || '');
+            setUsername(user.username || '');
+            setEmail(user.email || '');
+            setPhone(user.phone || '');
+            setAvatarUrl(user.avatarUrl);
+            // Location from user.location object
+            const locationStr = user.location?.city 
+                ? `${user.location.city}${user.location.region ? ', ' + user.location.region : ''}${user.location.country ? ', ' + user.location.country : ''}`
+                : '';
+            setLocation(locationStr);
+        }
+    }, [user]);
+
+    const handleAvatarUpload = async () => {
+        const newAvatarUrl = await uploadAvatar();
+        if (newAvatarUrl) {
+            setAvatarUrl(newAvatarUrl);
+            Alert.alert('Success', 'Profile picture updated successfully!');
+        }
+    };
+
+    const handleSave = async () => {
+        try {
+            // Parse location string into object (simple approach)
+            // Format expected: "City, Region, Country" or "City, Country" or "City"
+            const locationParts = location.split(',').map(part => part.trim());
+            const locationObj = locationParts.length > 0 && location ? {
+                city: locationParts[0] || undefined,
+                region: locationParts[1] || undefined,
+                country: locationParts[2] || locationParts[1] || undefined,
+            } : undefined;
+
+            await updateProfile.mutateAsync({
+                name: fullName,
+                username: username.replace('@', ''), // Remove @ if user added it
+                phone: phone || undefined,
+                location: locationObj,
+            });
+            
+            Alert.alert('Success', 'Profile updated successfully');
+            router.back();
+        } catch (error: any) {
+            Alert.alert('Error', error.message || 'Failed to update profile');
+        }
+    };
 
     const renderHeaderBackground = () => (
         <View style={[styles.headerBgContainer, { height: 180 + insets.top }]}>
@@ -79,63 +137,98 @@ export default function EditProfileScreen() {
                 contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 30 }]}
                 showsVerticalScrollIndicator={false}
             >
-                <View style={styles.profileSection}>
-                    <View style={styles.avatarContainer}>
-                        <Image
-                            source={{ uri: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=200&auto=format&fit=crop' }}
-                            style={styles.avatar}
-                        />
-                        <TouchableOpacity style={styles.cameraIconContainer} activeOpacity={0.8}>
-                            <Ionicons name="camera" size={16} color="#fff" />
-                        </TouchableOpacity>
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color="#4A54DF" />
                     </View>
+                ) : (
+                    <>
+                        <View style={styles.profileSection}>
+                            <View style={styles.avatarContainer}>
+                                <Image
+                                    source={{ 
+                                        uri: avatarUrl || getAvatarUrl(user?.name || 'User', 200)
+                                    }}
+                                    style={styles.avatar}
+                                />
+                                <TouchableOpacity 
+                                    style={styles.cameraIconContainer} 
+                                    activeOpacity={0.8}
+                                    onPress={handleAvatarUpload}
+                                    disabled={isUploadingAvatar}
+                                >
+                                    {isUploadingAvatar ? (
+                                        <ActivityIndicator size="small" color="#fff" />
+                                    ) : (
+                                        <Ionicons name="camera" size={16} color="#fff" />
+                                    )}
+                                </TouchableOpacity>
+                            </View>
 
-                    <Text style={styles.pageTitle}>Edit Profile</Text>
-                </View>
+                            <Text style={styles.pageTitle}>Edit Profile</Text>
+                        </View>
 
-                <View style={styles.formContainer}>
-                    <CustomInput
-                        label="Full Name"
-                        value={fullName}
-                        onChangeText={setFullName}
-                    />
-                    <CustomInput
-                        label="Username"
-                        value={username}
-                        onChangeText={setUsername}
-                        showChevron
-                    />
-                    <CustomInput
-                        label="Email Address"
-                        value={email}
-                        onChangeText={setEmail}
-                        showChevron
-                    />
-                    <CustomInput
-                        label="Location"
-                        value={location}
-                        onChangeText={setLocation}
-                        showChevron
-                    />
-                </View>
+                        <View style={styles.formContainer}>
+                            <CustomInput
+                                label="Full Name"
+                                value={fullName}
+                                onChangeText={setFullName}
+                            />
+                            <CustomInput
+                                label="Username"
+                                value={username}
+                                onChangeText={setUsername}
+                            />
+                            <View style={styles.inputContainer}>
+                                <Text style={styles.inputLabel}>Email Address</Text>
+                                <View style={[styles.inputWrapper, styles.disabledInput]}>
+                                    <TextInput
+                                        style={[styles.input, styles.disabledText]}
+                                        value={email}
+                                        editable={false}
+                                        placeholderTextColor="#9ca3af"
+                                    />
+                                    <Ionicons name="lock-closed" size={16} color="#9ca3af" />
+                                </View>
+                            </View>
+                            <CustomInput
+                                label="Phone Number"
+                                value={phone}
+                                onChangeText={setPhone}
+                            />
+                            <CustomInput
+                                label="Location"
+                                value={location}
+                                onChangeText={setLocation}
+                                showChevron
+                            />
+                        </View>
 
-                <View style={styles.actionButtonsContainer}>
-                    <TouchableOpacity
-                        style={styles.saveButton}
-                        activeOpacity={0.8}
-                        onPress={() => router.back()}
-                    >
-                        <Text style={styles.saveButtonText}>Save</Text>
-                    </TouchableOpacity>
+                        <View style={styles.actionButtonsContainer}>
+                            <TouchableOpacity
+                                style={[styles.saveButton, updateProfile.isPending && styles.disabledButton]}
+                                activeOpacity={0.8}
+                                onPress={handleSave}
+                                disabled={updateProfile.isPending}
+                            >
+                                {updateProfile.isPending ? (
+                                    <ActivityIndicator size="small" color="#fff" />
+                                ) : (
+                                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                                )}
+                            </TouchableOpacity>
 
-                    <TouchableOpacity
-                        style={styles.cancelButton}
-                        activeOpacity={0.8}
-                        onPress={() => router.back()}
-                    >
-                        <Text style={styles.cancelButtonText}>Cancel</Text>
-                    </TouchableOpacity>
-                </View>
+                            <TouchableOpacity
+                                style={styles.cancelButton}
+                                activeOpacity={0.8}
+                                onPress={() => router.back()}
+                                disabled={updateProfile.isPending}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </>
+                )}
             </ScrollView>
         </View>
     );
@@ -277,5 +370,20 @@ const styles = StyleSheet.create({
         color: '#6b7280',
         fontSize: 16,
         fontWeight: '500',
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 60,
+    },
+    disabledInput: {
+        backgroundColor: '#f3f4f6',
+    },
+    disabledText: {
+        color: '#9ca3af',
+    },
+    disabledButton: {
+        opacity: 0.6,
     },
 });

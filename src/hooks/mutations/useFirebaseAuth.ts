@@ -8,7 +8,7 @@ import { authService } from '../../api';
 import { saveTokens, saveUser } from '../../utils/storage';
 import type { FirebaseAuthRequest, FirebaseAuthResponse } from '../../types';
 
-export const useFirebaseAuth = () => {
+export const useFirebaseAuth = (onSuccess?: () => void) => {
   return useMutation({
     mutationFn: (data: FirebaseAuthRequest) => authService.firebaseAuth(data),
     
@@ -18,6 +18,11 @@ export const useFirebaseAuth = () => {
       
       // Save user data to storage
       await saveUser(response.user);
+      
+      // Call custom onSuccess if provided
+      if (onSuccess) {
+        onSuccess();
+      }
     },
     
     onError: (error) => {

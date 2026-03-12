@@ -17,6 +17,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/theme';
 import { useLogin, useSignup, useFirebaseAuth } from '@/src/hooks';
+import { useAuth } from '@/src/providers/AuthProvider';
 
 export default function LoginScreen() {
     const insets = useSafeAreaInsets();
@@ -24,10 +25,11 @@ export default function LoginScreen() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
+    const { signIn } = useAuth();
 
-    const { mutate: login, isPending: isLoggingIn } = useLogin();
-    const { mutate: signup, isPending: isSigningUp } = useSignup();
-    const { mutate: firebaseAuth, isPending: isFirebaseLoading } = useFirebaseAuth();
+    const { mutate: login, isPending: isLoggingIn } = useLogin(() => signIn());
+    const { mutate: signup, isPending: isSigningUp } = useSignup(() => signIn());
+    const { mutate: firebaseAuth, isPending: isFirebaseLoading } = useFirebaseAuth(() => signIn());
 
     // Hardcoding Expo Proxy Redirect URI as requested by user to force Expo Go into using 
     // it instead of the local IP address (Make sure this exactly matches what you put in Facebook console)
@@ -101,7 +103,7 @@ export default function LoginScreen() {
                 { email, password },
                 {
                     onSuccess: () => {
-                        router.replace('/(tabs)');
+                        // Navigation is handled automatically by AuthProvider
                     },
                     onError: (error: any) => {
                         Alert.alert('Login Failed', error.message || 'Invalid credentials');
@@ -117,7 +119,7 @@ export default function LoginScreen() {
                 { name, email, password },
                 {
                     onSuccess: () => {
-                        router.replace('/(tabs)');
+                        // Navigation is handled automatically by AuthProvider
                     },
                     onError: (error: any) => {
                         Alert.alert('Signup Failed', error.message || 'Could not create account');

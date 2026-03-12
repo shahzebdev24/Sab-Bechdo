@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import {
   Alert,
   Image,
@@ -15,39 +15,86 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  View
+  View,
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { router, useLocalSearchParams } from 'expo-router';
 
-import { createAd } from '@/lib/ad-service';
-import { saveLocation, type LocationPayload } from '@/lib/location-service';
 import { theme } from '@/theme';
-import { router } from 'expo-router';
+import { useCreateAd, useUpdateAd, useUploadMedia, useAdDetail } from '@/src/hooks';
+import type { AdCategory, AdCondition, AdLocation } from '@/src/types';
 
 const MAX_PHOTOS = 5;
 
-const CATEGORY_OPTIONS = ['Mobiles', 'Cars', 'Property', 'Jobs', 'Electronics', 'Services'];
+const CATEGORY_OPTIONS: { label: string; value: AdCategory }[] = [
+  { label: 'Electronics', value: 'electronics' },
+  { label: 'Vehicles', value: 'vehicles' },
+  { label: 'Property', value: 'property' },
+  { label: 'Fashion', value: 'fashion' },
+  { label: 'Home & Garden', value: 'home_garden' },
+  { label: 'Sports', value: 'sports' },
+  { label: 'Books', value: 'books' },
+  { label: 'Pets', value: 'pets' },
+  { label: 'Services', value: 'services' },
+  { label: 'Other', value: 'other' },
+];
 
 type PhotoItem = {
   id: string;
   uri: string;
 };
 
-type LocationState = LocationPayload & {
-  address?: string;
-};
-
 export default function PostAdScreen() {
+  const params = useLocalSearchParams<{ editId?: string }>();
+  const isEditMode = !!params.editId;
+  
+  // Fetch ad data if in edit mode
+  const { data: existingAd, isLoading: isLoadingAd } = useAdDetail(
+    params.editId || '',
+    isEditMode
+  );
+
   const [photos, setPhotos] = useState<PhotoItem[]>([]);
   const [title, setTitle] = useState('');
   const [price, setPrice] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [condition, setCondition] = useState<'new' | 'used'>('new');
+  const [selectedCategory, setSelectedCategory] = useState<AdCategory | null>(null);
+  const [condition, setCondition] = useState<AdCondition>('new');
   const [description, setDescription] = useState('');
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
-  const [locationState, setLocationState] = useState<LocationState | null>(null);
+  const [locationState, setLocationState] = useState<AdLocation | null>(null);
   const [videoUri, setVideoUri] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const { mutate: createAd, isPending: isCreatingAd } = useCreateAd();
+  const { mutate: updateAd, isPending: isUpdatingAd } = useUpdateAd();
+  const { mutateAsync: uploadMedia } = useUploadMedia();
+
+  // Pre-populate form when editing
+  useEffect(() => {
+    if (isEditMode && existingAd) {
+      setTitle(existingAd.title);
+      setPrice(existingAd.price.toString());
+      setSelectedCategory(existingAd.category);
+      setCondition(existingAd.condition);
+      setDescription(existingAd.description);
+      setLocationState(existingAd.location);
+      
+      // Set existing photos
+      if (existingAd.photoUrls && existingAd.photoUrls.length > 0) {
+        const existingPhotos: PhotoItem[] = existingAd.photoUrls.map((url, index) => ({
+          id: `existing-${index}`,
+          uri: url,
+        }));
+        setPhotos(existingPhotos);
+      }
+      
+      // Set existing video
+      if (existingAd.videoUrl) {
+        setVideoUri(existingAd.videoUrl);
+      }
+    }
+  }, [isEditMode, existingAd]);
 
   const videoPlayer = useVideoPlayer(videoUri || '', (player) => {
     player.loop = true;
@@ -133,12 +180,12 @@ export default function PostAdScreen() {
     setPhotos((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const handleSelectCategory = useCallback((value: string) => {
+  const handleSelectCategory = useCallback((value: AdCategory) => {
     setSelectedCategory(value);
     setCategoryModalVisible(false);
   }, []);
 
-  const handleToggleCondition = useCallback((value: 'new' | 'used') => {
+  const handleToggleCondition = useCallback((value: AdCondition) => {
     setCondition(value);
   }, []);
 
@@ -155,13 +202,13 @@ export default function PostAdScreen() {
       }
 
       const current = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced, // Faster than Highest
+        accuracy: Location.Accuracy.Balanced,
       });
 
-      const base: LocationState = {
+      const base: AdLocation = {
         latitude: current.coords.latitude,
         longitude: current.coords.longitude,
-        accuracy: current.coords.accuracy ?? null,
+        accuracy: current.coords.accuracy ?? undefined,
       };
 
       let addressText: string | undefined;
@@ -186,23 +233,22 @@ export default function PostAdScreen() {
         addressText = undefined;
       }
 
-      const fullLocation: LocationState = {
+      const fullLocation: AdLocation = {
         ...base,
         address: addressText,
       };
 
       setLocationState(fullLocation);
-
-      await saveLocation(base);
     } catch (error) {
-      console.warn('Failed to set location', error);
+      console.error('Failed to set location', error);
       Alert.alert('Location error', 'Unable to fetch your location right now. Please try again.');
     }
   }, []);
 
   const handlePostAd = useCallback(async () => {
-    if (isSubmitting) return;
+    if (isUploading || isCreatingAd || isUpdatingAd) return;
 
+    // Validation
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       Alert.alert('Missing title', 'Please enter a title for your ad.');
@@ -225,40 +271,137 @@ export default function PostAdScreen() {
       return;
     }
 
-    try {
-      setIsSubmitting(true);
-      console.log('Starting ad creation...');
+    if (!locationState) {
+      Alert.alert('Select location', 'Please select a location for your ad.');
+      return;
+    }
 
-      await createAd({
+    try {
+      setIsUploading(true);
+
+      // Separate existing URLs from new uploads
+      const existingPhotoUrls = photos.filter(p => p.id.startsWith('existing-')).map(p => p.uri);
+      const newPhotos = photos.filter(p => !p.id.startsWith('existing-'));
+
+      // Upload new photos
+      let uploadedPhotoUrls: string[] = [...existingPhotoUrls];
+      if (newPhotos.length > 0) {
+        const formData = new FormData();
+        
+        newPhotos.forEach((photo, index) => {
+          formData.append('files', {
+            uri: photo.uri,
+            type: 'image/jpeg',
+            name: `photo_${index}.jpg`,
+          } as any);
+        });
+
+        const uploadResult = await uploadMedia(formData);
+        uploadedPhotoUrls = [...uploadedPhotoUrls, ...uploadResult.files.map(file => file.secureUrl)];
+      }
+
+      // Upload video if it's new (not existing URL)
+      let uploadedVideoUrl: string | undefined = videoUri || undefined;
+      if (videoUri && !videoUri.startsWith('http')) {
+        const videoFormData = new FormData();
+        videoFormData.append('files', {
+          uri: videoUri,
+          type: 'video/mp4',
+          name: 'video.mp4',
+        } as any);
+
+        const videoUploadResult = await uploadMedia(videoFormData);
+        uploadedVideoUrl = videoUploadResult.files[0]?.secureUrl;
+      }
+
+      setIsUploading(false);
+
+      const adData = {
         title: trimmedTitle,
         price: numericPrice,
+        currency: 'PKR',
         category: selectedCategory,
         condition,
-        description,
-        photoUrls: photos.map((p) => p.uri),
-        videoUrl: videoUri || undefined,
-        location: locationState ?? undefined,
-      });
+        description: description.trim(),
+        photoUrls: uploadedPhotoUrls,
+        videoUrl: uploadedVideoUrl,
+        location: locationState,
+      };
 
-      Alert.alert('Success', 'Your ad has been posted.', [
-        {
-          text: 'OK',
-          onPress: () => {
-            if (videoUri) {
-              router.replace('/(tabs)/reel');
-            } else {
-              router.back();
-            }
-          },
-        },
-      ]);
+      // Update or Create
+      if (isEditMode && params.editId) {
+        updateAd(
+          { id: params.editId, data: adData },
+          {
+            onSuccess: () => {
+              Alert.alert('Success', 'Your ad has been updated.', [
+                {
+                  text: 'OK',
+                  onPress: () => router.back(),
+                },
+              ]);
+            },
+            onError: (error: any) => {
+              Alert.alert(
+                'Update Failed',
+                error.message || 'Failed to update ad. Please try again.'
+              );
+            },
+          }
+        );
+      } else {
+        createAd(
+          adData,
+          {
+            onSuccess: () => {
+              Alert.alert('Success', 'Your ad has been posted.', [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    if (uploadedVideoUrl) {
+                      router.replace('/(tabs)/reel');
+                    } else {
+                      router.replace('/(tabs)');
+                    }
+                  },
+                },
+              ]);
+            },
+            onError: (error: any) => {
+              Alert.alert(
+                'Post Failed',
+                error.message || 'Failed to create ad. Please try again.'
+              );
+            },
+          }
+        );
+      }
     } catch (error: any) {
-      console.warn('Failed to create ad', error);
-      Alert.alert('Post Failed', `Reason: ${error.message || 'Unknown error'}. Please check your connection and login status.`);
-    } finally {
-      setIsSubmitting(false);
+      setIsUploading(false);
+      console.error('Failed to upload media', error);
+      Alert.alert(
+        'Upload Failed',
+        error.message || 'Failed to upload media. Please check your connection and try again.'
+      );
     }
-  }, [condition, description, isSubmitting, locationState, photos, price, selectedCategory, title]);
+  }, [
+    condition,
+    description,
+    isCreatingAd,
+    isUpdatingAd,
+    isUploading,
+    locationState,
+    photos,
+    price,
+    selectedCategory,
+    title,
+    videoUri,
+    isEditMode,
+    params.editId,
+    createAd,
+    updateAd,
+    uploadMedia,
+  ]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -272,25 +415,26 @@ export default function PostAdScreen() {
           showsVerticalScrollIndicator={false}
           bounces={false}>
           <View style={styles.headerRow}>
-            <TouchableOpacity style={styles.headerIcon}>
+            <TouchableOpacity style={styles.headerIcon} onPress={() => router.back()}>
               <Ionicons name="chevron-back" size={22} color={theme.colors.textPrimary} />
             </TouchableOpacity>
             <View style={styles.headerTextContainer}>
-              <Text style={styles.headerTitle}>Post New Ad</Text>
+              <Text style={styles.headerTitle}>{isEditMode ? 'Edit Ad' : 'Post New Ad'}</Text>
               <Text style={styles.headerSubtitle}>Step 1 of 2</Text>
             </View>
             <View style={styles.headerSpacer} />
           </View>
 
-          {!videoUri && (
-            <View style={styles.photosCard}>
-              <TouchableOpacity style={styles.uploadArea} activeOpacity={0.9} onPress={handlePickPhotos}>
-                <View style={styles.uploadIconCircle}>
-                  <Ionicons name="cloud-upload-outline" size={24} color={theme.colors.primary} />
-                </View>
-                <Text style={styles.uploadTitle}>Add Photos</Text>
-              </TouchableOpacity>
+          <View style={styles.photosCard}>
+            <TouchableOpacity style={styles.uploadArea} activeOpacity={0.9} onPress={handlePickPhotos}>
+              <View style={styles.uploadIconCircle}>
+                <Ionicons name="cloud-upload-outline" size={24} color={theme.colors.primary} />
+              </View>
+              <Text style={styles.uploadTitle}>Add Photos (up to {MAX_PHOTOS})</Text>
+              <Text style={styles.uploadSubtitle}>{photos.length} / {MAX_PHOTOS} selected</Text>
+            </TouchableOpacity>
 
+            {photos.length > 0 && (
               <View style={styles.photoRow}>
                 {photos.map((item) => (
                   <View key={item.id} style={styles.photoItem}>
@@ -304,8 +448,8 @@ export default function PostAdScreen() {
                   </View>
                 ))}
               </View>
-            </View>
-          )}
+            )}
+          </View>
 
           <View style={styles.videoCard}>
             <View style={styles.videoUploadArea}>
@@ -389,7 +533,9 @@ export default function PostAdScreen() {
                   styles.inputPlaceholder,
                   selectedCategory && styles.inputValueText,
                 ]}>
-                {selectedCategory ?? 'Category'}
+                {selectedCategory 
+                  ? CATEGORY_OPTIONS.find(c => c.value === selectedCategory)?.label 
+                  : 'Category'}
               </Text>
               <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
             </TouchableOpacity>
@@ -464,11 +610,20 @@ export default function PostAdScreen() {
 
         <SafeAreaView edges={['bottom']} style={styles.footerSafeArea}>
           <TouchableOpacity
-            style={[styles.postButton, isSubmitting && styles.postButtonDisabled]}
+            style={[styles.postButton, (isUploading || isCreatingAd || isUpdatingAd || isLoadingAd) && styles.postButtonDisabled]}
             activeOpacity={0.9}
-            disabled={isSubmitting}
+            disabled={isUploading || isCreatingAd || isUpdatingAd || isLoadingAd}
             onPress={handlePostAd}>
-            <Text style={styles.postButtonText}>{isSubmitting ? 'Posting...' : 'Post Ad'}</Text>
+            {isUploading || isCreatingAd || isUpdatingAd ? (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator color="#fff" size="small" />
+                <Text style={styles.postButtonText}>
+                  {isUploading ? 'Uploading...' : isEditMode ? 'Updating...' : 'Posting...'}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.postButtonText}>{isEditMode ? 'Update Ad' : 'Post Ad'}</Text>
+            )}
           </TouchableOpacity>
         </SafeAreaView>
 
@@ -483,22 +638,22 @@ export default function PostAdScreen() {
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Select category</Text>
               {CATEGORY_OPTIONS.map((option) => {
-                const isActive = option === selectedCategory;
+                const isActive = option.value === selectedCategory;
                 return (
                   <TouchableOpacity
-                    key={option}
+                    key={option.value}
                     style={[
                       styles.modalItem,
                       isActive && styles.modalItemActive,
                     ]}
                     activeOpacity={0.9}
-                    onPress={() => handleSelectCategory(option)}>
+                    onPress={() => handleSelectCategory(option.value)}>
                     <Text
                       style={[
                         styles.modalItemText,
                         isActive && styles.modalItemTextActive,
                       ]}>
-                      {option}
+                      {option.label}
                     </Text>
                   </TouchableOpacity>
                 );
@@ -592,15 +747,23 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontWeight: '500',
   },
+  uploadSubtitle: {
+    fontSize: theme.fontSizes.xs,
+    color: theme.colors.textSecondary,
+    marginTop: 4,
+  },
   photoRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    marginHorizontal: -4,
   },
   photoItem: {
     width: '31%',
     aspectRatio: 4 / 3,
     borderRadius: theme.radius.md,
     overflow: 'hidden',
+    marginHorizontal: 4,
+    marginBottom: 8,
   },
   photoImage: {
     width: '100%',

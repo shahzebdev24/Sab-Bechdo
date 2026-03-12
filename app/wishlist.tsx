@@ -8,76 +8,77 @@ import {
     Text,
     TouchableOpacity,
     View,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
-
-type WishlistItem = {
-    id: string;
-    title: string;
-    price: string;
-    image: string;
-    location: string;
-    rating: number;
-};
-
-const WISHLIST_ITEMS: WishlistItem[] = [
-    {
-        id: '1',
-        title: 'iPhone 15 Pro Max',
-        price: '₹145,000',
-        image: 'https://images.unsplash.com/photo-1696446701796-da61225697cc?q=80&w=400&auto=format&fit=crop',
-        location: 'Mumbai, MH',
-        rating: 4.8,
-    },
-    {
-        id: '2',
-        title: 'Sony WH-1000XM5',
-        price: '₹28,990',
-        image: 'https://images.unsplash.com/photo-1628202926206-c63a34b1618f?q=80&w=400&auto=format&fit=crop',
-        location: 'Delhi, DL',
-        rating: 4.9,
-    },
-    {
-        id: '3',
-        title: 'Tesla Model S Plaid',
-        price: '₹12,000,000',
-        image: 'https://images.unsplash.com/photo-1617788130037-30a055538715?q=80&w=400&auto=format&fit=crop',
-        location: 'Bangalore, KA',
-        rating: 5.0,
-    },
-];
+import { useWishlist, useRemoveFromWishlist } from '@/src/hooks';
+import type { Ad } from '@/src/types';
 
 export default function WishlistScreen() {
-    const renderItem = ({ item }: { item: WishlistItem }) => (
-        <TouchableOpacity
-            style={styles.card}
-            activeOpacity={0.7}
-            onPress={() => router.push(`/product/${item.id}`)}
-        >
-            <Image source={{ uri: item.image }} style={styles.image} />
-            <View style={styles.content}>
-                <View style={styles.headerRow}>
-                    <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-                    <TouchableOpacity style={styles.heartButton}>
-                        <Ionicons name="heart" size={22} color="#EF4444" />
-                    </TouchableOpacity>
-                </View>
-                <Text style={styles.price}>{item.price}</Text>
-                <View style={styles.footerRow}>
-                    <View style={styles.infoItem}>
-                        <Ionicons name="location-outline" size={14} color={theme.colors.textSecondary} />
-                        <Text style={styles.infoText}>{item.location}</Text>
+    const { data: wishlistData, isLoading } = useWishlist({ page: 1, limit: 50 });
+    const { mutate: removeFromWishlist } = useRemoveFromWishlist();
+    const [removingAdId, setRemovingAdId] = React.useState<string | null>(null);
+
+    const wishlistItems = wishlistData?.ads || [];
+
+    const handleRemove = (adId: string) => {
+        setRemovingAdId(adId);
+        removeFromWishlist(adId, {
+            onSuccess: () => {
+                setRemovingAdId(null);
+            },
+            onError: (error) => {
+                console.error('Failed to remove from wishlist:', error);
+                setRemovingAdId(null);
+            },
+        });
+    };
+
+    const renderItem = ({ item }: { item: Ad }) => {
+        const isRemoving = removingAdId === item.id;
+        return (
+            <TouchableOpacity
+                style={styles.card}
+                activeOpacity={0.7}
+                onPress={() => router.push({
+                    pathname: '/product/[id]',
+                    params: { id: item.id }
+                })}
+            >
+                <Image 
+                    source={{ uri: item.photoUrls?.[0] || item.videoUrl || '' }} 
+                    style={styles.image} 
+                />
+                <View style={styles.content}>
+                    <View style={styles.headerRow}>
+                        <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
+                        <TouchableOpacity 
+                            style={styles.heartButton}
+                            onPress={() => handleRemove(item.id)}
+                            disabled={isRemoving}
+                        >
+                            {isRemoving ? (
+                                <ActivityIndicator size="small" color="#EF4444" />
+                            ) : (
+                                <Ionicons name="heart" size={22} color="#EF4444" />
+                            )}
+                        </TouchableOpacity>
                     </View>
-                    <View style={styles.infoItem}>
-                        <Ionicons name="star" size={14} color="#F59E0B" />
-                        <Text style={styles.infoText}>{item.rating}</Text>
+                    <Text style={styles.price}>Rs {item.price.toLocaleString('en-PK')}</Text>
+                    <View style={styles.footerRow}>
+                        <View style={styles.infoItem}>
+                            <Ionicons name="location-outline" size={14} color={theme.colors.textSecondary} />
+                            <Text style={styles.infoText} numberOfLines={1}>
+                                {item.location?.address || 'Location'}
+                            </Text>
+                        </View>
                     </View>
                 </View>
-            </View>
-        </TouchableOpacity>
-    );
+            </TouchableOpacity>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -91,19 +92,25 @@ export default function WishlistScreen() {
             </View>
 
             <FlatList
-                data={WISHLIST_ITEMS}
+                data={wishlistItems}
                 keyExtractor={(item) => item.id}
                 renderItem={renderItem}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        <Ionicons name="heart-outline" size={80} color={theme.colors.iconDefault} />
-                        <Text style={styles.emptyText}>Your wishlist is empty</Text>
-                        <TouchableOpacity style={styles.exploreButton} onPress={() => router.push('/')}>
-                            <Text style={styles.exploreText}>Explore Marketplace</Text>
-                        </TouchableOpacity>
-                    </View>
+                    isLoading ? (
+                        <View style={styles.emptyContainer}>
+                            <ActivityIndicator size="large" color={theme.colors.primary} />
+                        </View>
+                    ) : (
+                        <View style={styles.emptyContainer}>
+                            <Ionicons name="heart-outline" size={80} color={theme.colors.iconDefault} />
+                            <Text style={styles.emptyText}>Your wishlist is empty</Text>
+                            <TouchableOpacity style={styles.exploreButton} onPress={() => router.push('/')}>
+                                <Text style={styles.exploreText}>Explore Marketplace</Text>
+                            </TouchableOpacity>
+                        </View>
+                    )
                 }
             />
         </SafeAreaView>
@@ -188,10 +195,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
+        flex: 1,
     },
     infoText: {
         fontSize: 12,
         color: theme.colors.textSecondary,
+        flex: 1,
     },
     emptyContainer: {
         alignItems: 'center',

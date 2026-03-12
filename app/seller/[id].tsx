@@ -9,64 +9,61 @@ import {
     Text,
     TouchableOpacity,
     View,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSellerProfile, useSellerAds, useSellerReviews } from '@/src/hooks';
+import type { Ad } from '@/src/types';
 
 const { width } = Dimensions.get('window');
-
-const SELLER_ADS = [
-    {
-        id: 's1',
-        title: 'Sony WH-1000XM5',
-        price: '₹22,000',
-        location: 'Delhi',
-        image: 'https://images.unsplash.com/photo-1618366712010-f4ae9c647dcb?q=80&w=400&auto=format&fit=crop',
-    },
-    {
-        id: 's2',
-        title: 'Apple iPad Pro 11"',
-        price: '₹65,000',
-        location: 'Delhi',
-        image: 'https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?q=80&w=400&auto=format&fit=crop',
-    },
-    {
-        id: 's3',
-        title: 'Canon EOS 200D',
-        price: '₹28,000',
-        location: 'Delhi',
-        image: 'https://images.unsplash.com/photo-1502920917128-1aa500764cbd?q=80&w=400&auto=format&fit=crop',
-    },
-];
 
 export default function SellerProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const [favorites, setFavorites] = useState<Set<string>>(new Set());
 
-    const toggleFavorite = (id: string) => {
+    const { id } = useLocalSearchParams<{ id: string }>();
+    
+    // Fetch seller data
+    const { data: seller, isLoading: isLoadingSeller } = useSellerProfile(id);
+    const { data: adsData, isLoading: isLoadingAds } = useSellerAds(id, { page: 1, limit: 20, sort: 'recent' });
+    const { data: reviewsData } = useSellerReviews(id, { page: 1, limit: 1 });
+
+    const [followed, setFollowed] = useState(false);
+
+    const toggleFavorite = (adId: string) => {
         setFavorites((prev) => {
             const next = new Set(prev);
-            if (next.has(id)) {
-                next.delete(id);
+            if (next.has(adId)) {
+                next.delete(adId);
             } else {
-                next.add(id);
+                next.add(adId);
             }
             return next;
         });
     };
 
-    const { id, name, avatar, isFollowed } = useLocalSearchParams<{
-        id: string;
-        name: string;
-        avatar: string;
-        isFollowed?: string;
-    }>();
+    if (isLoadingSeller || isLoadingAds) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <ActivityIndicator size="large" color="#4A54DF" />
+            </View>
+        );
+    }
 
-    const [followed, setFollowed] = useState(isFollowed === 'true');
+    if (!seller) {
+        return (
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+                <Text style={{ color: '#6b7280' }}>Seller not found</Text>
+            </View>
+        );
+    }
 
-
-    const sellerName = name || 'Rohan Sharma';
-    const sellerAvatar = avatar || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop';
+    const sellerAds = adsData?.ads || [];
+    const activeAdsCount = seller.stats?.activeAds || 0;
+    const totalAdsCount = seller.stats?.totalAds || 0;
+    const averageRating = seller.stats?.rating || 0;
+    const totalReviews = seller.stats?.totalReviews || 0;
 
     const renderHeader = () => (
         <View>
@@ -81,27 +78,27 @@ export default function SellerProfileScreen() {
             </View>
 
             <View style={styles.profileSection}>
-                <Image source={{ uri: sellerAvatar }} style={styles.avatarImage} />
-                <Text style={styles.nameText}>{sellerName}</Text>
-                <Text style={styles.joinedText}>Joined Aug 2021</Text>
+                <Image source={{ uri: seller.avatarUrl }} style={styles.avatarImage} />
+                <Text style={styles.nameText}>{seller.name}</Text>
+                <Text style={styles.joinedText}>Member on Sab Bechdo</Text>
 
                 <View style={styles.statsContainer}>
                     <View style={styles.statBox}>
-                        <Text style={styles.statNumber}>15</Text>
+                        <Text style={styles.statNumber}>{activeAdsCount}</Text>
                         <Text style={styles.statLabel}>Active Ads</Text>
                     </View>
                     <View style={styles.statDivider} />
                     <View style={styles.statBox}>
-                        <Text style={styles.statNumber}>48</Text>
-                        <Text style={styles.statLabel}>Sold Items</Text>
+                        <Text style={styles.statNumber}>{totalAdsCount}</Text>
+                        <Text style={styles.statLabel}>Total Ads</Text>
                     </View>
                     <View style={styles.statDivider} />
                     <View style={styles.statBox}>
                         <View style={styles.ratingRow}>
                             <Ionicons name="star" size={14} color="#f59e0b" style={{ marginRight: 4 }} />
-                            <Text style={styles.statNumber}>4.9</Text>
+                            <Text style={styles.statNumber}>{averageRating.toFixed(1)}</Text>
                         </View>
-                        <Text style={styles.statLabel}>Rating</Text>
+                        <Text style={styles.statLabel}>{totalReviews} Reviews</Text>
                     </View>
                 </View>
 
@@ -116,7 +113,15 @@ export default function SellerProfileScreen() {
                     <TouchableOpacity
                         style={styles.secondaryButton}
                         activeOpacity={0.8}
-                        onPress={() => router.push('/chat')}
+                        onPress={() => router.push({
+                            pathname: '/chat/[id]',
+                            params: {
+                                id: seller.id,
+                                name: seller.name,
+                                avatar: seller.avatarUrl,
+                                online: 'false'
+                            }
+                        })}
                     >
                         <Text style={styles.secondaryButtonText}>Message</Text>
                     </TouchableOpacity>
@@ -132,32 +137,26 @@ export default function SellerProfileScreen() {
     return (
         <View style={styles.container}>
             <FlatList
-                data={SELLER_ADS}
+                data={sellerAds}
                 keyExtractor={(item) => item.id}
                 numColumns={2}
                 columnWrapperStyle={styles.columnWrapper}
                 contentContainerStyle={styles.listContent}
                 showsVerticalScrollIndicator={false}
                 ListHeaderComponent={renderHeader}
-                renderItem={({ item }) => {
+                renderItem={({ item }: { item: Ad }) => {
                     const isFavorite = favorites.has(item.id);
+                    const firstImage = item.photoUrls?.[0] || item.videoUrl;
                     return (
                         <TouchableOpacity
                             style={styles.card}
                             activeOpacity={0.9}
-                            // In a real app, this would push back to a specific product detail
                             onPress={() => router.push({
                                 pathname: '/product/[id]',
-                                params: {
-                                    id: item.id,
-                                    title: item.title,
-                                    price: item.price,
-                                    location: item.location,
-                                    imageUri: item.image
-                                }
+                                params: { id: item.id }
                             })}
                         >
-                            <Image source={{ uri: item.image }} style={styles.cardImage} />
+                            {firstImage && <Image source={{ uri: firstImage }} style={styles.cardImage} />}
                             <TouchableOpacity
                                 style={styles.favoriteBtn}
                                 activeOpacity={0.8}
@@ -170,16 +169,22 @@ export default function SellerProfileScreen() {
                                 />
                             </TouchableOpacity>
                             <View style={styles.cardContent}>
-                                <Text style={styles.price}>{item.price}</Text>
+                                <Text style={styles.price}>Rs {item.price.toLocaleString('en-PK')}</Text>
                                 <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
                                 <View style={styles.metaRow}>
                                     <Ionicons name="location-outline" size={12} color="#6b7280" />
-                                    <Text style={styles.metaText}>{item.location}</Text>
+                                    <Text style={styles.metaText}>{item.location?.address || 'Location'}</Text>
                                 </View>
                             </View>
                         </TouchableOpacity>
                     );
                 }}
+                ListEmptyComponent={
+                    <View style={{ padding: 40, alignItems: 'center' }}>
+                        <Ionicons name="cube-outline" size={64} color="#CBD5E1" />
+                        <Text style={{ marginTop: 16, color: '#94A3B8', fontSize: 15 }}>No ads published yet</Text>
+                    </View>
+                }
             />
         </View>
     );

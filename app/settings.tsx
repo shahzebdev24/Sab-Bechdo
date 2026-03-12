@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
     Alert,
     ScrollView,
@@ -9,11 +9,13 @@ import {
     Text,
     TouchableOpacity,
     View,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
-import { useLogout } from '@/src/hooks';
+import { useLogout, useMe, usePreferences, useUpdatePreferences } from '@/src/hooks';
+import { useAuth } from '@/src/providers/AuthProvider';
 
 type SettingItemProps = {
     icon: keyof typeof Ionicons.glyphMap;
@@ -71,9 +73,63 @@ const SectionHeader = ({ title }: { title: string }) => (
 );
 
 export default function SettingsScreen() {
-    const [notifications, setNotifications] = React.useState(true);
-    const [darkMode, setDarkMode] = React.useState(false);
-    const { mutate: logout, isPending: isLoggingOut } = useLogout();
+    // Fetch user data and preferences
+    const { data: user, isLoading: isLoadingUser } = useMe();
+    const { data: preferences, isLoading: isLoadingPreferences } = usePreferences();
+    const updatePreferences = useUpdatePreferences();
+    const { signOut } = useAuth();
+    const { mutate: logout, isPending: isLoggingOut } = useLogout(() => signOut());
+
+    // Notification preferences state
+    const [notifChat, setNotifChat] = useState(true);
+    const [notifLikes, setNotifLikes] = useState(true);
+    const [notifComments, setNotifComments] = useState(true);
+    const [notifFollows, setNotifFollows] = useState(true);
+    const [notifSystem, setNotifSystem] = useState(true);
+    
+    // App preferences state
+    const [appTheme, setAppTheme] = useState<'light' | 'dark' | 'system'>('system');
+    const [language, setLanguage] = useState('en');
+
+    // Load preferences when available
+    useEffect(() => {
+        if (preferences) {
+            setNotifChat(preferences.notifications.chat);
+            setNotifLikes(preferences.notifications.likes);
+            setNotifComments(preferences.notifications.comments);
+            setNotifFollows(preferences.notifications.follows);
+            setNotifSystem(preferences.notifications.system);
+            setAppTheme(preferences.theme);
+            setLanguage(preferences.language);
+        }
+    }, [preferences]);
+
+    // Update notification preference
+    const handleNotificationToggle = async (type: string, value: boolean) => {
+        try {
+            await updatePreferences.mutateAsync({
+                notifications: {
+                    [type]: value,
+                },
+            });
+        } catch (error) {
+            console.error('Failed to update notification preference:', error);
+        }
+    };
+
+    // Update theme preference
+    const handleThemeChange = async (newTheme: 'light' | 'dark' | 'system') => {
+        setAppTheme(newTheme);
+        try {
+            await updatePreferences.mutateAsync({
+                theme: newTheme,
+            });
+        } catch (error) {
+            console.error('Failed to update theme:', error);
+        }
+    };
+
+    const isLoading = isLoadingUser || isLoadingPreferences;
 
     const handleLogout = () => {
         Alert.alert(
@@ -88,14 +144,8 @@ export default function SettingsScreen() {
                     text: 'Logout',
                     style: 'destructive',
                     onPress: () => {
-                        logout(undefined, {
-                            onSuccess: () => {
-                                router.replace('/login');
-                            },
-                            onError: (error: any) => {
-                                Alert.alert('Error', error.message || 'Failed to logout');
-                            },
-                        });
+                        // Just call logout - hook will handle everything including signOut callback
+                        logout();
                     },
                 },
             ]
@@ -114,87 +164,171 @@ export default function SettingsScreen() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-                <SectionHeader title="Account" />
-                <View style={styles.section}>
-                    <SettingItem
-                        icon="person-outline"
-                        label="Edit Profile"
-                        onPress={() => router.push('/edit-profile')}
-                    />
-                    <SettingItem
-                        icon="mail-outline"
-                        label="Email"
-                        value="user@example.com"
-                    />
-                    <SettingItem
-                        icon="call-outline"
-                        label="Phone Number"
-                        value="+91 9876543210"
-                    />
-                    <SettingItem
-                        icon="lock-closed-outline"
-                        label="Change Password"
-                        onPress={() => router.push('/change-password')}
-                    />
-                </View>
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={theme.colors.primary} />
+                    </View>
+                ) : (
+                    <>
+                        <SectionHeader title="Account" />
+                        <View style={styles.section}>
+                            <SettingItem
+                                icon="person-outline"
+                                label="Edit Profile"
+                                onPress={() => router.push('/edit-profile')}
+                            />
+                            <SettingItem
+                                icon="mail-outline"
+                                label="Email"
+                                value={user?.email || 'Not set'}
+                            />
+                            <SettingItem
+                                icon="call-outline"
+                                label="Phone Number"
+                                value={user?.phone || 'Not set'}
+                            />
+                            <SettingItem
+                                icon="lock-closed-outline"
+                                label="Change Password"
+                                onPress={() => router.push('/change-password')}
+                            />
+                        </View>
 
-                <SectionHeader title="Preferences" />
-                <View style={styles.section}>
-                    <SettingItem
-                        icon="notifications-outline"
-                        label="Notifications"
-                        showSwitch
-                        switchValue={notifications}
-                        onSwitchChange={setNotifications}
-                    />
-                    <SettingItem
-                        icon="moon-outline"
-                        label="Dark Mode"
-                        showSwitch
-                        switchValue={darkMode}
-                        onSwitchChange={setDarkMode}
-                    />
-                    <SettingItem
-                        icon="globe-outline"
-                        label="Language"
-                        value="English"
-                    />
-                </View>
+                        <SectionHeader title="Notification Preferences" />
+                        <View style={styles.section}>
+                            <SettingItem
+                                icon="chatbubble-outline"
+                                label="Chat Messages"
+                                showSwitch
+                                switchValue={notifChat}
+                                onSwitchChange={(value) => {
+                                    setNotifChat(value);
+                                    handleNotificationToggle('chat', value);
+                                }}
+                            />
+                            <SettingItem
+                                icon="heart-outline"
+                                label="Likes"
+                                showSwitch
+                                switchValue={notifLikes}
+                                onSwitchChange={(value) => {
+                                    setNotifLikes(value);
+                                    handleNotificationToggle('likes', value);
+                                }}
+                            />
+                            <SettingItem
+                                icon="chatbox-outline"
+                                label="Comments"
+                                showSwitch
+                                switchValue={notifComments}
+                                onSwitchChange={(value) => {
+                                    setNotifComments(value);
+                                    handleNotificationToggle('comments', value);
+                                }}
+                            />
+                            <SettingItem
+                                icon="people-outline"
+                                label="Follows"
+                                showSwitch
+                                switchValue={notifFollows}
+                                onSwitchChange={(value) => {
+                                    setNotifFollows(value);
+                                    handleNotificationToggle('follows', value);
+                                }}
+                            />
+                            <SettingItem
+                                icon="notifications-outline"
+                                label="System Notifications"
+                                showSwitch
+                                switchValue={notifSystem}
+                                onSwitchChange={(value) => {
+                                    setNotifSystem(value);
+                                    handleNotificationToggle('system', value);
+                                }}
+                            />
+                        </View>
 
-                <SectionHeader title="More" />
-                <View style={styles.section}>
-                    <SettingItem
-                        icon="shield-checkmark-outline"
-                        label="Privacy Policy"
-                    />
-                    <SettingItem
-                        icon="document-text-outline"
-                        label="Terms of Service"
-                    />
-                    <SettingItem
-                        icon="help-circle-outline"
-                        label="Help & Support"
-                    />
-                    <SettingItem
-                        icon="information-circle-outline"
-                        label="About SabBechdo"
-                        value="v1.0.2"
-                    />
-                </View>
+                        <SectionHeader title="App Preferences" />
+                        <View style={styles.section}>
+                            <SettingItem
+                                icon="moon-outline"
+                                label="Theme"
+                                value={appTheme === 'system' ? 'System' : appTheme === 'dark' ? 'Dark' : 'Light'}
+                                onPress={() => {
+                                    Alert.alert(
+                                        'Choose Theme',
+                                        'Select your preferred theme',
+                                        [
+                                            {
+                                                text: 'Light',
+                                                onPress: () => handleThemeChange('light'),
+                                            },
+                                            {
+                                                text: 'Dark',
+                                                onPress: () => handleThemeChange('dark'),
+                                            },
+                                            {
+                                                text: 'System',
+                                                onPress: () => handleThemeChange('system'),
+                                            },
+                                            {
+                                                text: 'Cancel',
+                                                style: 'cancel',
+                                            },
+                                        ]
+                                    );
+                                }}
+                            />
+                            <SettingItem
+                                icon="globe-outline"
+                                label="Language"
+                                value={language === 'en' ? 'English' : language}
+                            />
+                        </View>
 
-                <TouchableOpacity 
-                    style={styles.logoutButton} 
-                    activeOpacity={0.8}
-                    onPress={handleLogout}
-                    disabled={isLoggingOut}
-                >
-                    <Ionicons name="log-out-outline" size={22} color="#EF4444" />
-                    <Text style={styles.logoutText}>
-                        {isLoggingOut ? 'Logging out...' : 'Log Out'}
-                    </Text>
-                </TouchableOpacity>
+                        <SectionHeader title="More" />
+                        <View style={styles.section}>
+                            <SettingItem
+                                icon="shield-checkmark-outline"
+                                label="Privacy Policy"
+                            />
+                            <SettingItem
+                                icon="document-text-outline"
+                                label="Terms of Service"
+                            />
+                            <SettingItem
+                                icon="help-circle-outline"
+                                label="Help & Support"
+                                onPress={() => router.push('/help')}
+                            />
+                            <SettingItem
+                                icon="information-circle-outline"
+                                label="About SabBechdo"
+                                value="v1.0.2"
+                            />
+                        </View>
 
-                <Text style={styles.footerText}>Joined since October 2023</Text>
+                        <TouchableOpacity 
+                            style={styles.logoutButton} 
+                            activeOpacity={0.8}
+                            onPress={handleLogout}
+                            disabled={isLoggingOut}
+                        >
+                            {isLoggingOut ? (
+                                <ActivityIndicator size="small" color="#EF4444" />
+                            ) : (
+                                <>
+                                    <Ionicons name="log-out-outline" size={22} color="#EF4444" />
+                                    <Text style={styles.logoutText}>Log Out</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+
+                        <Text style={styles.footerText}>
+                            Joined {user?.createdAt ? new Date(user.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : ''}
+                        </Text>
+                    </>
+                )}
             </ScrollView>
         </SafeAreaView>
     );
@@ -302,5 +436,11 @@ const styles = StyleSheet.create({
         color: theme.colors.textSecondary,
         marginTop: 20,
         marginBottom: 40,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingVertical: 60,
     },
 });

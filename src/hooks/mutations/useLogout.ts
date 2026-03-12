@@ -8,12 +8,21 @@ import { authService } from '../../api';
 import { removeTokens, removeUser } from '../../utils/storage';
 import { queryClient } from '../../config';
 
-export const useLogout = () => {
+// Flag to prevent multiple simultaneous logout operations
+let isLoggingOut = false;
+
+export const useLogout = (onSuccess?: () => void) => {
   return useMutation({
-    mutationFn: () => authService.logout(),
+    mutationFn: async () => {
+      if (isLoggingOut) {
+        return;
+      }
+      isLoggingOut = true;
+      return authService.logout();
+    },
     
     onSuccess: async () => {
-      // Remove tokens from storage
+      // Remove tokens FIRST before calling callback
       await removeTokens();
       
       // Remove user data from storage
@@ -21,15 +30,31 @@ export const useLogout = () => {
       
       // Clear all queries from cache
       queryClient.clear();
+      
+      // Reset flag
+      isLoggingOut = false;
+      
+      // Call custom onSuccess AFTER everything is cleared
+      if (onSuccess) {
+        onSuccess();
+      }
     },
     
-    onError: (error) => {
+    onError: async (error) => {
       console.error('Logout error:', error);
       
       // Even if API call fails, clear local data
-      removeTokens();
-      removeUser();
+      await removeTokens();
+      await removeUser();
       queryClient.clear();
+      
+      // Reset flag
+      isLoggingOut = false;
+      
+      // Call callback even on error
+      if (onSuccess) {
+        onSuccess();
+      }
     },
   });
 };

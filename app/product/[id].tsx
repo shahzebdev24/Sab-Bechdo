@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Alert,
     Dimensions,
@@ -10,48 +10,109 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+    View,
+    ActivityIndicator
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { useAdDetail, useToggleWishlist } from '@/src/hooks';
+import { getAvatarUrl } from '@/src/utils/avatar';
 
 const { width } = Dimensions.get('window');
-
-// Mock data for details that aren't passed from the list
-const MOCK_DESCRIPTION =
-    "In excellent condition. Used it very carefully with a screen protector and case from day one. I'm upgrading to a newer model, which is the only reason I'm selling. Box, original charger, and bill are available. Price is slightly negotiable for serious buyers. Feel free to contact me for more details!";
 
 export default function ProductDetailScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const [isFavorite, setIsFavorite] = useState(false);
+    const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
-    // Get the parameters passed during navigation
-    const { id, title, price, location, imageUri } = useLocalSearchParams<{
-        id: string;
-        title: string;
-        price: string;
-        location: string;
-        imageUri: string;
-    }>();
+    // Get the ad ID from route params
+    const { id } = useLocalSearchParams<{ id: string }>();
+    
+    // Fetch ad details from backend
+    const { data: ad, isLoading } = useAdDetail(id);
+
+    // Wishlist toggle
+    const { toggle: toggleWishlist, isLoading: isTogglingWishlist } = useToggleWishlist();
+
+    // Sync isFavorite with ad data
+    useEffect(() => {
+        if (ad) {
+            setIsFavorite(ad.isFavorite || false);
+        }
+    }, [ad]);
+
+    const handleToggleFavorite = async () => {
+        if (!ad) return;
+        try {
+            await toggleWishlist(ad.id, isFavorite);
+            setIsFavorite(!isFavorite);
+        } catch (error) {
+            console.error('Failed to toggle wishlist:', error);
+        }
+    };
+
+    // Video player - initialize early (before conditional returns)
+    const videoPlayer = useVideoPlayer(ad?.videoUrl || '', (player) => {
+        player.loop = false;
+    });
 
     const onShare = async () => {
+        if (!ad) return;
         try {
             const result = await Share.share({
-                message: `Check out this ${title} on Sab Bechdo for ${price}!\n\nLocation: ${location}`,
+                message: `Check out this ${ad.title} on Sab Bechdo for Rs ${ad.price.toLocaleString('en-PK')}!\n\nLocation: ${ad.location?.address || 'Location'}`,
             });
-            if (result.action === Share.sharedAction) {
-                if (result.activityType) {
-                    // shared with activity type of result.activityType
-                } else {
-                    // shared
-                }
-            } else if (result.action === Share.dismissedAction) {
-                // dismissed
-            }
         } catch (error: any) {
             Alert.alert(error.message);
         }
     };
+
+    if (isLoading) {
+        return (
+            <View style={[styles.container, styles.loadingContainer]}>
+                <ActivityIndicator size="large" color="#4A54DF" />
+            </View>
+        );
+    }
+
+    if (!ad) {
+        return (
+            <View style={[styles.container, styles.loadingContainer]}>
+                <Text style={styles.errorText}>Ad not found</Text>
+            </View>
+        );
+    }
+
+    // Get all media (photos + video)
+    const allMedia = [
+        ...(ad.photoUrls || []),
+        ...(ad.videoUrl ? [ad.videoUrl] : [])
+    ];
+    const currentMedia = allMedia[currentImageIndex] || 'https://images.unsplash.com/photo-1605236453806-6ff36851218e?q=80&w=800&auto=format&fit=crop';
+
+    // Check if current media is video
+    const isCurrentVideo = currentMedia === ad.videoUrl;
+    const photoCount = ad.photoUrls?.length || 0;
+    const hasVideo = !!ad.videoUrl;
+
+    // Play video when it's the current media
+    if (isCurrentVideo && ad.videoUrl) {
+        videoPlayer.play();
+    } else {
+        videoPlayer.pause();
+    }
+
+    // Format condition
+    const conditionLabel = ad.condition === 'new' ? 'New' : 'Used';
+    
+    // Calculate time ago
+    const timeAgo = ad.createdAt ? new Date(ad.createdAt).toLocaleDateString() : 'Recently';
+
+    // Owner info
+    const ownerName = ad.owner?.name || 'Seller';
+    const ownerAvatar = ad.owner?.avatarUrl || getAvatarUrl(ownerName, 200);
+    const ownerId = ad.owner?.id || 'unknown';
 
     return (
         <View style={styles.container}>
@@ -75,41 +136,82 @@ export default function ProductDetailScreen() {
                     <TouchableOpacity
                         style={[styles.actionButton, { marginLeft: 12 }]}
                         activeOpacity={0.8}
-                        onPress={() => setIsFavorite(!isFavorite)}
+                        onPress={handleToggleFavorite}
+                        disabled={isTogglingWishlist}
                     >
-                        <Ionicons
-                            name={isFavorite ? "heart" : "heart-outline"}
-                            size={24}
-                            color={isFavorite ? "#ff3b30" : "#1f2937"}
-                        />
+                        {isTogglingWishlist ? (
+                            <ActivityIndicator size="small" color="#ff3b30" />
+                        ) : (
+                            <Ionicons
+                                name={isFavorite ? "heart" : "heart-outline"}
+                                size={24}
+                                color={isFavorite ? "#ff3b30" : "#1f2937"}
+                            />
+                        )}
                     </TouchableOpacity>
                 </View>
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
-                {/* Main Product Image */}
+                {/* Main Product Image/Media */}
                 <View style={styles.imageContainer}>
-                    <Image
-                        source={{ uri: imageUri || 'https://images.unsplash.com/photo-1605236453806-6ff36851218e?q=80&w=800&auto=format&fit=crop' }}
-                        style={styles.productImage}
-                        resizeMode="cover"
-                    />
+                    {isCurrentVideo ? (
+                        <VideoView
+                            player={videoPlayer}
+                            style={styles.productImage}
+                            contentFit="cover"
+                            nativeControls={true}
+                        />
+                    ) : (
+                        <Image
+                            source={{ uri: currentMedia }}
+                            style={styles.productImage}
+                            resizeMode="cover"
+                        />
+                    )}
+                    {allMedia.length > 1 && (
+                        <View style={styles.imageIndicator}>
+                            <Text style={styles.imageIndicatorText}>
+                                {isCurrentVideo ? 'Video' : `${currentImageIndex + 1} / ${photoCount}${hasVideo ? ' + Video' : ''}`}
+                            </Text>
+                        </View>
+                    )}
+                    {allMedia.length > 1 && (
+                        <View style={[styles.imageNavigation, currentImageIndex === 0 && { justifyContent: 'flex-end' }]}>
+                            {currentImageIndex > 0 && (
+                                <TouchableOpacity
+                                    style={styles.navButton}
+                                    onPress={() => setCurrentImageIndex(currentImageIndex - 1)}
+                                >
+                                    <Ionicons name="chevron-back" size={24} color="#fff" />
+                                </TouchableOpacity>
+                            )}
+                            {currentImageIndex < allMedia.length - 1 && (
+                                <TouchableOpacity
+                                    style={styles.navButton}
+                                    onPress={() => setCurrentImageIndex(currentImageIndex + 1)}
+                                >
+                                    <Ionicons name="chevron-forward" size={24} color="#fff" />
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    )}
                 </View>
 
                 {/* Content Details */}
                 <View style={styles.contentContainer}>
                     <View style={styles.titleRow}>
-                        <Text style={styles.price}>{price}</Text>
+                        <Text style={styles.price}>Rs {ad.price.toLocaleString('en-PK')}</Text>
                         <View style={styles.conditionBadge}>
-                            <Text style={styles.conditionText}>Used - Like New</Text>
+                            <Text style={styles.conditionText}>{conditionLabel}</Text>
                         </View>
                     </View>
 
-                    <Text style={styles.title}>{title}</Text>
+                    <Text style={styles.title}>{ad.title}</Text>
 
                     <View style={styles.locationRow}>
                         <Ionicons name="location" size={16} color="#6b7280" />
-                        <Text style={styles.locationText}>{location} • Posted 2 days ago</Text>
+                        <Text style={styles.locationText}>{ad.location?.address || 'Location'} • Posted {timeAgo}</Text>
                     </View>
 
                     <View style={styles.divider} />
@@ -118,21 +220,21 @@ export default function ProductDetailScreen() {
                     <Text style={styles.sectionTitle}>Seller Profile</Text>
                     <View style={styles.sellerContainer}>
                         <Image
-                            source={{ uri: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop' }}
+                            source={{ uri: ownerAvatar }}
                             style={styles.sellerAvatar}
                         />
                         <View style={styles.sellerInfo}>
-                            <Text style={styles.sellerName}>Rohan Sharma</Text>
-                            <Text style={styles.sellerJoined}>Member since Aug 2021</Text>
+                            <Text style={styles.sellerName}>{ownerName}</Text>
+                            <Text style={styles.sellerJoined}>Member on Sab Bechdo</Text>
                         </View>
                         <TouchableOpacity
                             style={styles.viewProfileBtn}
                             onPress={() => router.push({
                                 pathname: '/seller/[id]',
                                 params: {
-                                    id: 'seller-123',
-                                    name: 'Rohan Sharma',
-                                    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop'
+                                    id: ownerId,
+                                    name: ownerName,
+                                    avatar: ownerAvatar
                                 }
                             })}
                             activeOpacity={0.8}
@@ -145,7 +247,7 @@ export default function ProductDetailScreen() {
 
                     {/* Description */}
                     <Text style={styles.sectionTitle}>Description</Text>
-                    <Text style={styles.descriptionText}>{MOCK_DESCRIPTION}</Text>
+                    <Text style={styles.descriptionText}>{ad.description}</Text>
 
                     {/* Address Section */}
                     <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Address</Text>
@@ -153,7 +255,7 @@ export default function ProductDetailScreen() {
                         <View style={styles.addressIconCircle}>
                             <Ionicons name="location" size={20} color="#4A54DF" />
                         </View>
-                        <Text style={styles.fullAddressText}>{location || 'Address not provided'}</Text>
+                        <Text style={styles.fullAddressText}>{ad.location?.address || 'Address not provided'}</Text>
                     </View>
                 </View>
             </ScrollView>
@@ -166,10 +268,10 @@ export default function ProductDetailScreen() {
                     onPress={() => router.push({
                         pathname: '/chat/[id]',
                         params: {
-                            id: 'seller-123',
-                            name: 'Rohan Sharma',
-                            avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=200&auto=format&fit=crop',
-                            online: 'true'
+                            id: ownerId,
+                            name: ownerName,
+                            avatar: ownerAvatar,
+                            online: 'false'
                         }
                     })}
                 >
@@ -181,7 +283,7 @@ export default function ProductDetailScreen() {
                     activeOpacity={0.8}
                     onPress={() => router.push({
                         pathname: '/make-offer',
-                        params: { title: title || '', price: price || '' }
+                        params: { title: ad.title, price: ad.price.toString() }
                     })}
                 >
                     <Text style={styles.offerButtonText}>Make Offer</Text>
@@ -398,5 +500,46 @@ const styles = StyleSheet.create({
         color: '#4A54DF',
         fontSize: 16,
         fontWeight: '600',
+    },
+    loadingContainer: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    errorText: {
+        fontSize: 16,
+        color: '#6b7280',
+    },
+    imageIndicator: {
+        position: 'absolute',
+        bottom: 16,
+        right: 16,
+        backgroundColor: 'rgba(0,0,0,0.7)',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        zIndex: 10,
+    },
+    imageIndicatorText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+    },
+    imageNavigation: {
+        position: 'absolute',
+        top: '50%',
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        zIndex: 5,
+    },
+    navButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 });

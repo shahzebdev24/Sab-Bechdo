@@ -6,6 +6,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { authService } from '../../api';
 import { isAuthenticated } from '../../utils/storage';
+import type { User } from '../../types';
 
 export const PROFILE_QUERY_KEY = ['profile'];
 
@@ -13,9 +14,6 @@ export const useProfile = () => {
   return useQuery({
     queryKey: PROFILE_QUERY_KEY,
     queryFn: () => authService.getProfile(),
-    
-    // Only fetch if user is authenticated
-    enabled: false, // Will be enabled manually when needed
     
     // Stale time: 5 minutes
     staleTime: 5 * 60 * 1000,
@@ -42,4 +40,12 @@ export const usePrefetchProfile = () => {
   };
   
   return { prefetch };
+};
+
+/**
+ * Hook to get current user - returns User object directly
+ */
+export const useMe = () => {
+  const query = useProfile();
+  return query;
 };

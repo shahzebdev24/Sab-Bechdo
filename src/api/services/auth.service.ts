@@ -53,8 +53,8 @@ export const logout = async (): Promise<void> => {
 /**
  * Get user profile
  */
-export const getProfile = async (): Promise<ProfileResponse> => {
-  const response = await apiClient.get<any, ApiSuccessResponse<ProfileResponse>>(
+export const getProfile = async (): Promise<User> => {
+  const response = await apiClient.get<any, ApiSuccessResponse<User>>(
     ENDPOINTS.AUTH.PROFILE
   );
   return response.data;

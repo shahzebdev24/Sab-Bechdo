@@ -41,13 +41,13 @@ export default function MakeOfferScreen() {
             >
                 <View style={styles.productInfo}>
                     <Text style={styles.productTitle}>{title || 'Product Title'}</Text>
-                    <Text style={styles.productPrice}>Listed Price: {price || '₹0'}</Text>
+                    <Text style={styles.productPrice}>Listed Price: {price || '₨0'}</Text>
                 </View>
 
                 <View style={styles.inputSection}>
                     <Text style={styles.label}>Your Offer</Text>
                     <View style={styles.amountInputRow}>
-                        <Text style={styles.currencySymbol}>₹</Text>
+                        <Text style={styles.currencySymbol}>₨</Text>
                         <TextInput
                             style={styles.amountInput}
                             placeholder="0.00"
