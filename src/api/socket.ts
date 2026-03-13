@@ -17,9 +17,18 @@ class SocketClient {
    * Connect to Socket.IO server
    */
   async connect(): Promise<void> {
+    // If already connected, just return
     if (this.socket?.connected) {
       console.log('Socket already connected');
       return;
+    }
+
+    // If socket exists but disconnected, disconnect first
+    if (this.socket && !this.socket.connected) {
+      console.log('Cleaning up old socket connection');
+      this.socket.removeAllListeners();
+      this.socket.disconnect();
+      this.socket = null;
     }
 
     try {
@@ -33,6 +42,8 @@ class SocketClient {
       // Extract base URL without /api/v1
       const baseUrl = API_CONFIG.BASE_URL.replace('/api/v1', '');
 
+      console.log('Creating new socket connection with fresh token');
+
       this.socket = io(baseUrl, {
         auth: {
           token,
@@ -42,6 +53,7 @@ class SocketClient {
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
         reconnectionAttempts: this.maxReconnectAttempts,
+        autoConnect: true,
       });
 
       this.setupEventListeners();
@@ -57,9 +69,11 @@ class SocketClient {
    */
   disconnect(): void {
     if (this.socket) {
+      this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
-      console.log('Socket disconnected');
+      this.reconnectAttempts = 0;
+      console.log('Socket disconnected and cleaned up');
     }
   }
 
@@ -83,11 +97,28 @@ class SocketClient {
 
     this.socket.on('disconnect', (reason) => {
       console.log('Socket disconnected:', reason);
+      
+      // If server disconnected us, try to reconnect with fresh token
+      if (reason === 'io server disconnect' || reason === 'transport close') {
+        console.log('Server disconnected, will reconnect with fresh token');
+      }
     });
 
-    this.socket.on('connect_error', (error) => {
+    this.socket.on('connect_error', async (error) => {
       console.error('Socket connection error:', error);
       this.reconnectAttempts++;
+      
+      // If authentication failed, try to get fresh token and reconnect
+      if (error.message === 'Authentication failed') {
+        console.log('Authentication failed, attempting reconnect with fresh token');
+        
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          // Wait a bit before reconnecting
+          setTimeout(async () => {
+            await this.connect();
+          }, 2000);
+        }
+      }
       
       if (this.reconnectAttempts >= this.maxReconnectAttempts) {
         console.error('Max reconnection attempts reached');
@@ -204,6 +235,23 @@ class SocketClient {
     // Return cleanup function
     return () => {
       this.socket?.off('notification:new', callback);
+    };
+  }
+
+  /**
+   * Listen for notification removal (like/unlike behavior)
+   */
+  onNotificationRemoved(callback: (data: { type: string; adId?: string; userId?: string; action?: string }) => void): () => void {
+    if (!this.socket) {
+      console.warn('Socket not initialized');
+      return () => {};
+    }
+
+    this.socket.on('notification:removed', callback);
+
+    // Return cleanup function
+    return () => {
+      this.socket?.off('notification:removed', callback);
     };
   }
 

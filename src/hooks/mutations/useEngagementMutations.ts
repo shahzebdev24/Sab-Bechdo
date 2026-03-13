@@ -120,27 +120,42 @@ export const useFollowUser = () => {
 
   return useMutation({
     mutationFn: (userId: string) => engagementService.followUser(userId),
+    onMutate: async (userId) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: queryKeys.engagement.followStatus(userId) });
+      
+      // Snapshot the previous value
+      const previousStatus = queryClient.getQueryData(queryKeys.engagement.followStatus(userId));
+      
+      // Optimistically update to the new value
+      queryClient.setQueryData(queryKeys.engagement.followStatus(userId), { following: true });
+      
+      return { previousStatus };
+    },
     onSuccess: (response, userId) => {
-      // Update follow status cache
+      // Update follow status cache with server response
       queryClient.setQueryData(queryKeys.engagement.followStatus(userId), response);
       
-      // Invalidate follow stats
+      // Invalidate ALL engagement queries to force refresh
       queryClient.invalidateQueries({ 
-        queryKey: queryKeys.engagement.followStats(userId) 
+        queryKey: ['engagement'] 
       });
       
-      // Invalidate followers/following lists
+      // Invalidate ALL user queries to force refresh
       queryClient.invalidateQueries({ 
-        queryKey: ['engagement', 'followers'] 
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['engagement', 'following'] 
+        queryKey: ['users'] 
       });
       
-      // Invalidate seller profile
+      // Invalidate ads queries (in case they contain follow status)
       queryClient.invalidateQueries({ 
-        queryKey: queryKeys.users.seller(userId) 
+        queryKey: ['ads'] 
       });
+    },
+    onError: (err, userId, context) => {
+      // Rollback on error
+      if (context?.previousStatus) {
+        queryClient.setQueryData(queryKeys.engagement.followStatus(userId), context.previousStatus);
+      }
     },
   });
 };
@@ -153,27 +168,42 @@ export const useUnfollowUser = () => {
 
   return useMutation({
     mutationFn: (userId: string) => engagementService.unfollowUser(userId),
+    onMutate: async (userId) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: queryKeys.engagement.followStatus(userId) });
+      
+      // Snapshot the previous value
+      const previousStatus = queryClient.getQueryData(queryKeys.engagement.followStatus(userId));
+      
+      // Optimistically update to the new value
+      queryClient.setQueryData(queryKeys.engagement.followStatus(userId), { following: false });
+      
+      return { previousStatus };
+    },
     onSuccess: (response, userId) => {
-      // Update follow status cache
+      // Update follow status cache with server response
       queryClient.setQueryData(queryKeys.engagement.followStatus(userId), response);
       
-      // Invalidate follow stats
+      // Invalidate ALL engagement queries to force refresh
       queryClient.invalidateQueries({ 
-        queryKey: queryKeys.engagement.followStats(userId) 
+        queryKey: ['engagement'] 
       });
       
-      // Invalidate followers/following lists
+      // Invalidate ALL user queries to force refresh
       queryClient.invalidateQueries({ 
-        queryKey: ['engagement', 'followers'] 
-      });
-      queryClient.invalidateQueries({ 
-        queryKey: ['engagement', 'following'] 
+        queryKey: ['users'] 
       });
       
-      // Invalidate seller profile
+      // Invalidate ads queries (in case they contain follow status)
       queryClient.invalidateQueries({ 
-        queryKey: queryKeys.users.seller(userId) 
+        queryKey: ['ads'] 
       });
+    },
+    onError: (err, userId, context) => {
+      // Rollback on error
+      if (context?.previousStatus) {
+        queryClient.setQueryData(queryKeys.engagement.followStatus(userId), context.previousStatus);
+      }
     },
   });
 };
@@ -186,11 +216,11 @@ export const useToggleFollow = () => {
   const unfollowUser = useUnfollowUser();
 
   return {
-    toggle: (userId: string, isFollowing: boolean) => {
+    toggle: async (userId: string, isFollowing: boolean) => {
       if (isFollowing) {
-        return unfollowUser.mutateAsync(userId);
+        return await unfollowUser.mutateAsync(userId);
       } else {
-        return followUser.mutateAsync(userId);
+        return await followUser.mutateAsync(userId);
       }
     },
     isLoading: followUser.isPending || unfollowUser.isPending,

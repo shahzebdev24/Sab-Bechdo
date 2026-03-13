@@ -22,30 +22,45 @@ import type {
  * Like an ad
  */
 export const likeAd = async (adId: string): Promise<LikeStatusResponse> => {
-  const response = await apiClient.post<any, ApiSuccessResponse<LikeStatusResponse>>(
+  const response = await apiClient.post<any, ApiSuccessResponse<{ liked: boolean; likesCount: number }>>(
     ENDPOINTS.ENGAGEMENT.LIKE(adId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    liked: response.data.liked,
+    likesCount: response.data.likesCount
+  };
 };
 
 /**
  * Unlike an ad
  */
 export const unlikeAd = async (adId: string): Promise<LikeStatusResponse> => {
-  const response = await apiClient.delete<any, ApiSuccessResponse<LikeStatusResponse>>(
+  const response = await apiClient.delete<any, ApiSuccessResponse<{ unliked: boolean; likesCount: number }>>(
     ENDPOINTS.ENGAGEMENT.UNLIKE(adId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    liked: !response.data.unliked, // If unliked successfully, liked = false
+    likesCount: response.data.likesCount
+  };
 };
 
 /**
- * Check if user liked an ad
+ * Check if user liked an ad and get like count
  */
 export const getLikeStatus = async (adId: string): Promise<LikeStatusResponse> => {
-  const response = await apiClient.get<any, ApiSuccessResponse<LikeStatusResponse>>(
+  const response = await apiClient.get<any, ApiSuccessResponse<{ isLiked: boolean; likesCount: number }>>(
     ENDPOINTS.ENGAGEMENT.LIKE_STATUS(adId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    liked: response.data.isLiked,
+    likesCount: response.data.likesCount
+  };
 };
 
 // ============ COMMENTS ============
@@ -69,8 +84,8 @@ export const listComments = async (
  */
 export const createComment = async (data: CreateCommentRequest): Promise<Comment> => {
   const response = await apiClient.post<any, ApiSuccessResponse<Comment>>(
-    ENDPOINTS.ENGAGEMENT.COMMENT_CREATE,
-    data
+    ENDPOINTS.ENGAGEMENT.COMMENT_CREATE(data.adId),
+    { text: data.text }
   );
   return response.data;
 };
@@ -88,30 +103,42 @@ export const deleteComment = async (commentId: string): Promise<void> => {
  * Follow a user
  */
 export const followUser = async (userId: string): Promise<FollowStatusResponse> => {
-  const response = await apiClient.post<any, ApiSuccessResponse<FollowStatusResponse>>(
+  const response = await apiClient.post<any, ApiSuccessResponse<any>>(
     ENDPOINTS.ENGAGEMENT.FOLLOW(userId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    following: response.data.followed ?? response.data.following ?? true
+  };
 };
 
 /**
  * Unfollow a user
  */
 export const unfollowUser = async (userId: string): Promise<FollowStatusResponse> => {
-  const response = await apiClient.delete<any, ApiSuccessResponse<FollowStatusResponse>>(
+  const response = await apiClient.delete<any, ApiSuccessResponse<any>>(
     ENDPOINTS.ENGAGEMENT.UNFOLLOW(userId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    following: response.data.followed ?? response.data.following ?? false
+  };
 };
 
 /**
  * Check if user is following another user
  */
 export const getFollowStatus = async (userId: string): Promise<FollowStatusResponse> => {
-  const response = await apiClient.get<any, ApiSuccessResponse<FollowStatusResponse>>(
+  const response = await apiClient.get<any, ApiSuccessResponse<any>>(
     ENDPOINTS.ENGAGEMENT.FOLLOW_STATUS(userId)
   );
-  return response.data;
+  
+  // Map backend response to frontend format
+  return {
+    following: response.data.isFollowing ?? response.data.followed ?? response.data.following ?? false
+  };
 };
 
 /**

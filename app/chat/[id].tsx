@@ -2,25 +2,203 @@ import { theme } from '@/theme';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Image,
     KeyboardAvoidingView,
     Platform,
-    ScrollView,
+    FlatList,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
-    View
+    View,
+    ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useMessagesInfinite, useMarkConversationRead, useProfile, useConversation } from '@/src/hooks';
+import { socketClient } from '@/src/api/socket';
+import { getAvatarUrl } from '@/src/utils/avatar';
+import type { Message, MessageNewEvent } from '@/src/types';
+import { useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/src/hooks/queries/queryKeys';
+import { ProductContextCard } from '@/components/chat/ProductContextCard';
+
+// Simple time formatter
+const formatMessageTime = (dateString: string): string => {
+    try {
+        const date = new Date(dateString);
+        return date.toLocaleTimeString('en-US', { 
+            hour: 'numeric', 
+            minute: '2-digit',
+            hour12: true 
+        });
+    } catch {
+        return '';
+    }
+};
 
 export default function IndividualChatScreen() {
     const insets = useSafeAreaInsets();
     const navigation = useNavigation();
-    const { id, name, avatar, online } = useLocalSearchParams();
+    const { id } = useLocalSearchParams();
+    const conversationId = id as string;
+    const { data: profile } = useProfile(); // Get current user profile
+    
     const [message, setMessage] = useState('');
+    const [localMessages, setLocalMessages] = useState<Message[]>([]);
+    const flatListRef = useRef<FlatList>(null);
+    const queryClient = useQueryClient();
+
+    // Fetch conversation details
+    const { data: conversation } = useConversation(conversationId);
+
+    // Fetch messages with infinite scroll (20 messages per page)
+    const { 
+        data: messagesData, 
+        isLoading, 
+        error: messagesError,
+        fetchNextPage,
+        hasNextPage,
+        isFetchingNextPage,
+    } = useMessagesInfinite(conversationId, {
+        limit: 20,
+    });
+
+    // Get other participant (not current user)
+    const otherParticipant = React.useMemo(() => {
+        if (!conversation || !profile) return null;
+        
+        // If current user is buyer, show seller. Otherwise show buyer
+        const isBuyer = conversation.buyer?.id === profile.id;
+        return isBuyer ? conversation.seller : conversation.buyer;
+    }, [conversation, profile]);
+
+    const userName = otherParticipant?.name || 'User';
+    const userAvatar = otherParticipant?.avatarUrl || getAvatarUrl(userName, 200);
+
+    // Log errors for debugging
+    useEffect(() => {
+        if (messagesError) {
+            console.error('[Chat] Error fetching messages:', messagesError);
+        }
+    }, [messagesError]);
+
+    // Mark as read mutation
+    const { mutate: markAsRead } = useMarkConversationRead();
+
+    // Flatten messages from all pages
+    const messages = React.useMemo(() => {
+        if (!messagesData?.pages) return [];
+        // Backend sends newest first (descending order)
+        // Page 1: [100, 99, 98, ..., 81] (latest 20)
+        // Page 2: [80, 79, 78, ..., 61] (older 20)
+        // For inverted list, we keep this order - inverted will show correctly
+        return messagesData.pages.flatMap(page => page.messages);
+    }, [messagesData]);
+    
+    // Deduplicate messages by ID to prevent duplicates
+    const allMessages = React.useMemo(() => {
+        const messageMap = new Map<string, Message>();
+        
+        // Add fetched messages first
+        messages.forEach(msg => {
+            if (msg.id) {
+                messageMap.set(msg.id, msg);
+            }
+        });
+        
+        // Add local messages (only if not already in fetched messages)
+        localMessages.forEach(msg => {
+            if (msg.id && !messageMap.has(msg.id)) {
+                messageMap.set(msg.id, msg);
+            }
+        });
+        
+        return Array.from(messageMap.values());
+    }, [messages, localMessages]);
+
+    // Mark conversation as read on mount
+    useEffect(() => {
+        if (conversationId) {
+            markAsRead(conversationId);
+        }
+    }, [conversationId]);
+
+    // Join conversation room and listen for new messages
+    useEffect(() => {
+        if (!conversationId) {
+            return;
+        }
+
+        if (!socketClient.isConnected()) {
+            return;
+        }
+
+        // Join conversation room
+        socketClient.joinConversation(conversationId);
+
+        // Listen for new messages
+        const cleanupNewMessage = socketClient.onMessageNew((data: MessageNewEvent) => {
+            if (data.conversationId === conversationId) {
+                // Add message to local state (will be deduplicated)
+                setLocalMessages(prev => {
+                    // Check if message already exists
+                    const exists = prev.some(msg => msg.id === data.message.id);
+                    if (exists) {
+                        return prev;
+                    }
+                    return [...prev, data.message];
+                });
+                
+                // Invalidate queries to refresh
+                queryClient.invalidateQueries({ 
+                    queryKey: queryKeys.chat.messages(conversationId) 
+                }).then(() => {
+                    // Clear local messages after query refetch completes
+                    setLocalMessages([]);
+                });
+                
+                queryClient.invalidateQueries({ 
+                    queryKey: queryKeys.chat.conversations() 
+                });
+
+                // Mark as read
+                markAsRead(conversationId);
+
+                // No need to scroll - inverted list handles it automatically
+            }
+        });
+
+        // Listen for messages read event
+        const cleanupMessagesRead = socketClient.onMessagesRead((data: { conversationId: string; userId: string; count: number }) => {
+            if (data.conversationId === conversationId) {
+                // Invalidate messages query to refresh read status
+                queryClient.invalidateQueries({ 
+                    queryKey: queryKeys.chat.messages(conversationId) 
+                });
+                
+                // Also invalidate conversations to update unread counts
+                queryClient.invalidateQueries({ 
+                    queryKey: queryKeys.chat.conversations() 
+                });
+            }
+        });
+
+        // Cleanup on unmount
+        return () => {
+            cleanupNewMessage();
+            cleanupMessagesRead();
+            socketClient.leaveConversation(conversationId);
+        };
+    }, [conversationId, queryClient]);
+
+    // Handle load more messages (when scrolling up in inverted list = onEndReached)
+    const handleLoadMore = () => {
+        if (hasNextPage && !isFetchingNextPage) {
+            fetchNextPage();
+        }
+    };
 
     const handleBack = useCallback(() => {
         if (navigation.canGoBack()) {
@@ -30,11 +208,89 @@ export default function IndividualChatScreen() {
         }
     }, [navigation]);
 
+    const handleSendMessage = () => {
+        if (!message.trim() || !conversationId) {
+            return;
+        }
+
+        const messageText = message.trim();
+
+        // Optimistically update conversation in cache
+        queryClient.setQueryData(
+            queryKeys.chat.conversations(),
+            (oldData: any) => {
+                if (!oldData?.conversations) return oldData;
+                
+                return {
+                    ...oldData,
+                    conversations: oldData.conversations.map((conv: any) => {
+                        if (conv.id === conversationId) {
+                            return {
+                                ...conv,
+                                lastMessage: messageText,
+                                lastMessageAt: new Date().toISOString(),
+                            };
+                        }
+                        return conv;
+                    }),
+                };
+            }
+        );
+
+        // Send message via socket
+        socketClient.sendMessage(conversationId, messageText);
+
+        // Invalidate conversations query to update from server
+        queryClient.invalidateQueries({ 
+            queryKey: queryKeys.chat.conversations() 
+        });
+
+        // Clear input
+        setMessage('');
+
+        // No need to scroll - inverted list handles it automatically
+    };
+
+    const renderMessage = (msg: Message, index: number) => {
+        // Check if message is from current user
+        const senderId = typeof msg.sender === 'string' ? msg.sender : msg.sender?.id;
+        const currentUserId = profile?.id;
+        const isMyMessage = senderId === currentUserId;
+        
+        const messageTime = formatMessageTime(msg.createdAt);
+
+        if (isMyMessage) {
+            // Show single tick for unread, double tick for read
+            const tickIcon = msg.isRead ? 'checkmark-done' : 'checkmark';
+            
+            return (
+                <View key={msg.id || `local-${index}`} style={styles.msgRowRight}>
+                    <View style={styles.bubbleRight}>
+                        <Text style={styles.txtRight}>{msg.body}</Text>
+                        <View style={styles.rightMeta}>
+                            <Text style={styles.timeRight}>{messageTime}</Text>
+                            <Ionicons name={tickIcon} size={14} color="#fff" style={{ marginLeft: 4 }} />
+                        </View>
+                    </View>
+                </View>
+            );
+        }
+
+        return (
+            <View key={msg.id || `local-${index}`} style={styles.msgRowLeft}>
+                <View style={styles.bubbleLeft}>
+                    <Text style={styles.txtLeft}>{msg.body}</Text>
+                    <Text style={styles.timeLeft}>{messageTime}</Text>
+                </View>
+            </View>
+        );
+    };
+
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
 
-            {/* Premium Sticky Header */}
+            {/* Header */}
             <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
                 <TouchableOpacity style={styles.iconBtn} onPress={handleBack} activeOpacity={0.7}>
                     <Ionicons name="chevron-back" size={26} color="#1E293B" />
@@ -43,18 +299,15 @@ export default function IndividualChatScreen() {
                 <TouchableOpacity
                     style={styles.headerProfile}
                     activeOpacity={0.7}
-                    onPress={() => router.push(`/seller/${id}`)}
                 >
                     <View style={styles.avatarWrapper}>
                         <Image
-                            source={{ uri: (avatar as string) || 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop' }}
+                            source={{ uri: userAvatar }}
                             style={styles.avatarImg}
                         />
-                        {online === 'true' && <View style={styles.onlineStatus} />}
                     </View>
                     <View style={styles.nameSection}>
-                        <Text style={styles.profileName}>{name || 'Sarah Mitchell'}</Text>
-                        <Text style={styles.onlineText}>{online === 'true' ? 'Active now' : 'Offline'}</Text>
+                        <Text style={styles.profileName}>{userName}</Text>
                     </View>
                 </TouchableOpacity>
 
@@ -74,74 +327,51 @@ export default function IndividualChatScreen() {
                 keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
             >
                 {/* Chat Content */}
-                <ScrollView
-                    style={styles.chatScroll}
-                    contentContainerStyle={[styles.scrollInner, { paddingBottom: 120 }]}
-                    showsVerticalScrollIndicator={false}
-                    keyboardDismissMode="on-drag"
-                    keyboardShouldPersistTaps="handled"
-                >
-                    <View style={styles.dateBadge}>
-                        <Text style={styles.dateText}>Today</Text>
+                {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={theme.colors.primary} />
+                        <Text style={styles.loadingText}>Loading messages...</Text>
                     </View>
-
-                    {/* Left Message */}
-                    <View style={styles.msgRowLeft}>
-                        <View style={styles.bubbleLeft}>
-                            <Text style={styles.txtLeft}>Hey! Is the iPhone still available? I'm really interested! 😊</Text>
-                            <Text style={styles.timeLeft}>2:14 PM</Text>
-                        </View>
-                    </View>
-
-                    {/* Right Message */}
-                    <View style={styles.msgRowRight}>
-                        <View style={styles.bubbleRight}>
-                            <Text style={styles.txtRight}>Yes, it is! I just posted it an hour ago. It's in great condition. 🔥</Text>
-                            <View style={styles.rightMeta}>
-                                <Text style={styles.timeRight}>2:15 PM</Text>
-                                <Ionicons name="checkmark-done" size={14} color="#fff" style={{ marginLeft: 4 }} />
+                ) : (
+                    <FlatList
+                        ref={flatListRef}
+                        data={allMessages}
+                        renderItem={({ item, index }) => renderMessage(item, index)}
+                        keyExtractor={(item, index) => item.id || `local-${index}`}
+                        style={styles.chatScroll}
+                        contentContainerStyle={styles.scrollInner}
+                        showsVerticalScrollIndicator={false}
+                        keyboardDismissMode="on-drag"
+                        keyboardShouldPersistTaps="handled"
+                        inverted={true}
+                        onEndReached={handleLoadMore}
+                        onEndReachedThreshold={0.5}
+                        ListFooterComponent={
+                            <>
+                                {/* Product Context Card at bottom (top when inverted) */}
+                                {conversation?.ad && (
+                                    <ProductContextCard ad={conversation.ad} />
+                                )}
+                                {/* Load More Indicator */}
+                                {isFetchingNextPage && (
+                                    <View style={styles.loadMoreContainer}>
+                                        <ActivityIndicator size="small" color={theme.colors.primary} />
+                                        <Text style={styles.loadMoreText}>Loading older messages...</Text>
+                                    </View>
+                                )}
+                            </>
+                        }
+                        ListEmptyComponent={
+                            <View style={styles.emptyContainer}>
+                                <Ionicons name="chatbubbles-outline" size={64} color="#CBD5E1" />
+                                <Text style={styles.emptyText}>No messages yet</Text>
+                                <Text style={styles.emptySubtext}>Start the conversation!</Text>
                             </View>
-                        </View>
-                    </View>
+                        }
+                    />
+                )}
 
-                    {/* Product Context Card */}
-                    <View style={styles.contextContainer}>
-                        <View style={styles.productGlassCard}>
-                            <Image
-                                source={{ uri: 'https://images.unsplash.com/photo-1605236453806-6ff36851218e?q=80&w=400&auto=format&fit=crop' }}
-                                style={styles.productThumb}
-                            />
-                            <View style={styles.productInfo}>
-                                <Text style={styles.prodName}>iPhone 12 - 64GB</Text>
-                                <Text style={styles.prodPrice}>₨ 18,500</Text>
-                            </View>
-                            <TouchableOpacity style={styles.viewBtn}>
-                                <Text style={styles.viewText}>View</Text>
-                            </TouchableOpacity>
-                        </View>
-                    </View>
-
-                    {/* Left Message */}
-                    <View style={styles.msgRowLeft}>
-                        <View style={styles.bubbleLeft}>
-                            <Text style={styles.txtLeft}>Great! Could you share some real photos from different angles?</Text>
-                            <Text style={styles.timeLeft}>2:16 PM</Text>
-                        </View>
-                    </View>
-
-                    {/* Right Message */}
-                    <View style={styles.msgRowRight}>
-                        <View style={styles.bubbleRight}>
-                            <Text style={styles.txtRight}>Sure, sending them right away... 📸</Text>
-                            <View style={styles.rightMeta}>
-                                <Text style={styles.timeRight}>2:18 PM</Text>
-                                <Ionicons name="checkmark-done" size={14} color="#fff" style={{ marginLeft: 4 }} />
-                            </View>
-                        </View>
-                    </View>
-                </ScrollView>
-
-                {/* Premium Input Bar */}
+                {/* Input Bar */}
                 <View style={[styles.inputBarContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                     <View style={styles.inputShadowWrapper}>
                         <View style={styles.mainInputRow}>
@@ -163,8 +393,10 @@ export default function IndividualChatScreen() {
                             </TouchableOpacity>
 
                             <TouchableOpacity
-                                style={[styles.sendBtn, !message && styles.sendBtnDisabled]}
+                                style={[styles.sendBtn, !message.trim() && styles.sendBtnDisabled]}
                                 activeOpacity={0.8}
+                                onPress={handleSendMessage}
+                                disabled={!message.trim()}
                             >
                                 <Ionicons name="send" size={20} color="#fff" />
                             </TouchableOpacity>
@@ -216,17 +448,6 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         backgroundColor: '#E2E8F0',
     },
-    onlineStatus: {
-        position: 'absolute',
-        bottom: -2,
-        right: -2,
-        width: 12,
-        height: 12,
-        borderRadius: 6,
-        backgroundColor: '#10B981',
-        borderWidth: 2,
-        borderColor: '#fff',
-    },
     nameSection: {
         marginLeft: 12,
     },
@@ -235,33 +456,54 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#1E293B',
     },
-    onlineText: {
-        fontSize: 12,
-        color: '#10B981',
-        fontWeight: '600',
-    },
     headerRightActions: {
         flexDirection: 'row',
         gap: 4,
+    },
+    loadingContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    loadingText: {
+        marginTop: 16,
+        fontSize: 14,
+        color: '#64748B',
+    },
+    loadMoreContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        paddingTop: 20,
+        gap: 8,
+    },
+    loadMoreText: {
+        fontSize: 13,
+        color: '#64748B',
+        fontWeight: '500',
     },
     chatScroll: {
         flex: 1,
     },
     scrollInner: {
         padding: 20,
+        flexGrow: 1,
     },
-    dateBadge: {
-        alignSelf: 'center',
-        backgroundColor: '#E2E8F0',
-        paddingHorizontal: 12,
-        paddingVertical: 4,
-        borderRadius: 12,
-        marginBottom: 24,
+    emptyContainer: {
+        alignItems: 'center',
+        marginTop: 100,
     },
-    dateText: {
-        fontSize: 12,
-        color: '#64748B',
-        fontWeight: '700',
+    emptyText: {
+        marginTop: 16,
+        fontSize: 16,
+        color: '#94A3B8',
+        fontWeight: '600',
+    },
+    emptySubtext: {
+        marginTop: 8,
+        fontSize: 14,
+        color: '#CBD5E1',
     },
     msgRowLeft: {
         flexDirection: 'row',
@@ -324,53 +566,6 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.8)',
         fontWeight: '500',
     },
-    contextContainer: {
-        marginBottom: 24,
-    },
-    productGlassCard: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#fff',
-        padding: 12,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: '#F1F5F9',
-        shadowColor: '#000',
-        shadowOpacity: 0.04,
-        shadowRadius: 12,
-        elevation: 2,
-    },
-    productThumb: {
-        width: 50,
-        height: 50,
-        borderRadius: 12,
-    },
-    productInfo: {
-        flex: 1,
-        marginLeft: 12,
-    },
-    prodName: {
-        fontSize: 14,
-        fontWeight: '700',
-        color: '#1E293B',
-    },
-    prodPrice: {
-        fontSize: 13,
-        color: theme.colors.primary,
-        fontWeight: '700',
-        marginTop: 2,
-    },
-    viewBtn: {
-        backgroundColor: '#F1F5F9',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 10,
-    },
-    viewText: {
-        fontSize: 12,
-        color: '#475569',
-        fontWeight: '700',
-    },
     inputBarContainer: {
         backgroundColor: '#fff',
         paddingTop: 12,
@@ -390,7 +585,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: '#F8FAFC',
         borderRadius: 24,
-        paddingHorizontal: 8,
+        paddingHorizontal: 12,
         paddingVertical: 6,
         borderWidth: 1,
         borderColor: '#F1F5F9',

@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMe, useMyAds, useDeleteAd, useUpdateAdStatus } from '@/src/hooks';
-import type { Ad } from '@/src/types';
+import type { Ad, AdStatus } from '@/src/types';
 import { theme } from '@/theme';
 
 export default function MyAdsScreen() {
@@ -64,6 +64,15 @@ export default function MyAdsScreen() {
     };
 
     const handleStatusChange = (ad: Ad) => {
+        if (!canChangeStatus(ad.status)) {
+            const statusMsg = getStatusMessage(ad.status, ad.rejectionReason);
+            Alert.alert(
+                'Cannot Change Status',
+                statusMsg?.message || 'Status cannot be changed at this time.'
+            );
+            return;
+        }
+        
         setSelectedAd(ad);
         setShowStatusModal(true);
     };
@@ -74,7 +83,7 @@ export default function MyAdsScreen() {
         setShowStatusModal(false);
         
         updateStatus(
-            { id: selectedAd.id, data: { status } },
+            { id: selectedAd.id, data: { status: status as AdStatus } },
             {
                 onSuccess: () => {
                     Alert.alert('Success', `Ad marked as ${status}`);
@@ -94,11 +103,65 @@ export default function MyAdsScreen() {
         { value: 'archived', label: 'Archived', icon: 'archive', color: '#94A3B8', description: 'Hide from listings' },
     ];
 
+    // Get available status options based on current status
+    const getAvailableStatusOptions = (currentStatus: string) => {
+        switch (currentStatus) {
+            case 'pending':
+                return []; // No options - waiting for admin approval
+            case 'active':
+                return [
+                    { value: 'sold', label: 'Sold', icon: 'checkmark-done-circle', color: '#64748B', description: 'Item has been sold' },
+                    { value: 'archived', label: 'Archived', icon: 'archive', color: '#94A3B8', description: 'Hide from listings' }
+                ];
+            case 'rejected':
+                return []; // No options - need to edit and resubmit
+            case 'sold':
+                return [
+                    { value: 'active', label: 'Active', icon: 'checkmark-circle', color: '#16A34A', description: 'Relist the item' },
+                    { value: 'archived', label: 'Archived', icon: 'archive', color: '#94A3B8', description: 'Keep as sold but archive' }
+                ];
+            case 'archived':
+                return [
+                    { value: 'active', label: 'Active', icon: 'checkmark-circle', color: '#16A34A', description: 'Relist the item' }
+                ];
+            default:
+                return [];
+        }
+    };
+
+    // Check if status can be changed
+    const canChangeStatus = (status: string) => {
+        return status !== 'pending' && status !== 'rejected';
+    };
+
+    // Get status message for pending/rejected ads
+    const getStatusMessage = (status: string, rejectionReason?: string) => {
+        switch (status) {
+            case 'pending':
+                return {
+                    type: 'info',
+                    icon: 'time-outline',
+                    message: 'Your ad is pending admin approval. You\'ll be notified once reviewed.'
+                };
+            case 'rejected':
+                return {
+                    type: 'error',
+                    icon: 'close-circle-outline',
+                    message: rejectionReason 
+                        ? `Rejected: ${rejectionReason}. You can edit and resubmit.`
+                        : 'Rejected. Please review our guidelines. You can edit and resubmit.'
+                };
+            default:
+                return null;
+        }
+    };
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'active': return '#16A34A';
             case 'sold': return '#64748B';
             case 'pending': return '#F59E0B';
+            case 'rejected': return '#EF4444';
             case 'archived': return '#94A3B8';
             default: return theme.colors.textSecondary;
         }
@@ -145,10 +208,18 @@ export default function MyAdsScreen() {
                         </View>
                         <View style={styles.buttonRow}>
                             <TouchableOpacity 
-                                style={styles.statusButton}
+                                style={[
+                                    styles.statusButton,
+                                    !canChangeStatus(item.status) && styles.statusButtonDisabled
+                                ]}
                                 onPress={() => handleStatusChange(item)}
+                                disabled={!canChangeStatus(item.status)}
                             >
-                                <Ionicons name="swap-horizontal-outline" size={18} color="#F59E0B" />
+                                <Ionicons 
+                                    name="swap-horizontal-outline" 
+                                    size={18} 
+                                    color={canChangeStatus(item.status) ? '#F59E0B' : '#CBD5E1'} 
+                                />
                             </TouchableOpacity>
                             <TouchableOpacity 
                                 style={styles.editButton}
@@ -169,6 +240,35 @@ export default function MyAdsScreen() {
                             </TouchableOpacity>
                         </View>
                     </View>
+
+                    {/* Status Message for Pending/Rejected */}
+                    {getStatusMessage(item.status, item.rejectionReason) && (
+                        <View style={[
+                            styles.statusMessage,
+                            { 
+                                backgroundColor: getStatusMessage(item.status, item.rejectionReason)?.type === 'error' 
+                                    ? '#FEE2E2' 
+                                    : '#DBEAFE' 
+                            }
+                        ]}>
+                            <Ionicons 
+                                name={getStatusMessage(item.status, item.rejectionReason)?.icon as any} 
+                                size={14} 
+                                color={getStatusMessage(item.status, item.rejectionReason)?.type === 'error' ? '#EF4444' : '#3B82F6'}
+                                style={styles.statusMessageIcon}
+                            />
+                            <Text style={[
+                                styles.statusMessageText,
+                                { 
+                                    color: getStatusMessage(item.status, item.rejectionReason)?.type === 'error' 
+                                        ? '#991B1B' 
+                                        : '#1E40AF' 
+                                }
+                            ]}>
+                                {getStatusMessage(item.status, item.rejectionReason)?.message}
+                            </Text>
+                        </View>
+                    )}
                 </View>
             </TouchableOpacity>
         );
@@ -242,7 +342,7 @@ export default function MyAdsScreen() {
                         )}
 
                         <View style={styles.statusOptions}>
-                            {statusOptions.map((option) => (
+                            {getAvailableStatusOptions(selectedAd?.status || '').map((option) => (
                                 <TouchableOpacity
                                     key={option.value}
                                     style={[
@@ -264,6 +364,20 @@ export default function MyAdsScreen() {
                                     )}
                                 </TouchableOpacity>
                             ))}
+                            
+                            {/* Show message if no options available */}
+                            {getAvailableStatusOptions(selectedAd?.status || '').length === 0 && (
+                                <View style={styles.noOptionsContainer}>
+                                    <Ionicons 
+                                        name={getStatusMessage(selectedAd?.status || '', selectedAd?.rejectionReason)?.icon as any} 
+                                        size={48} 
+                                        color={getStatusMessage(selectedAd?.status || '')?.type === 'error' ? '#EF4444' : '#3B82F6'}
+                                    />
+                                    <Text style={styles.noOptionsText}>
+                                        {getStatusMessage(selectedAd?.status || '', selectedAd?.rejectionReason)?.message}
+                                    </Text>
+                                </View>
+                            )}
                         </View>
 
                         {isUpdatingStatus && (
@@ -510,5 +624,38 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
+    },
+    statusButtonDisabled: {
+        opacity: 0.4,
+    },
+    statusMessage: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 10,
+        padding: 10,
+        borderRadius: 8,
+        gap: 6,
+    },
+    statusMessageIcon: {
+        marginRight: 2,
+    },
+    statusMessageText: {
+        flex: 1,
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: '500',
+    },
+    noOptionsContainer: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 40,
+        paddingHorizontal: 20,
+    },
+    noOptionsText: {
+        marginTop: 16,
+        fontSize: 14,
+        color: theme.colors.textSecondary,
+        textAlign: 'center',
+        lineHeight: 20,
     },
 });

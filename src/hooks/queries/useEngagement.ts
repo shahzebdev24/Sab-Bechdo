@@ -71,7 +71,8 @@ export const useFollowStatus = (userId: string, enabled = true) => {
     queryKey: queryKeys.engagement.followStatus(userId),
     queryFn: () => engagementService.getFollowStatus(userId),
     enabled: enabled && !!userId,
-    staleTime: 2 * 60 * 1000,
+    staleTime: 0, // Always fetch fresh data
+    cacheTime: 5 * 60 * 1000, // Keep in cache for 5 minutes
   });
 };
 

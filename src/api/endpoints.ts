@@ -60,20 +60,21 @@ export const ENDPOINTS = {
     // Likes
     LIKE: (adId: string) => `/engagement/likes/${adId}`,
     UNLIKE: (adId: string) => `/engagement/likes/${adId}`,
-    LIKE_STATUS: (adId: string) => `/engagement/likes/${adId}/status`,
+    LIKE_STATUS: (adId: string) => `/engagement/likes/${adId}/check`,
+    LIKE_COUNT: (adId: string) => `/engagement/likes/${adId}/count`,
     
     // Comments
-    COMMENTS_LIST: (adId: string) => `/engagement/comments/${adId}`,
-    COMMENT_CREATE: '/engagement/comments',
+    COMMENTS_LIST: (adId: string) => `/engagement/comments/ad/${adId}`,
+    COMMENT_CREATE: (adId: string) => `/engagement/comments/ad/${adId}`,
     COMMENT_DELETE: (commentId: string) => `/engagement/comments/${commentId}`,
     
     // Follows
     FOLLOW: (userId: string) => `/engagement/follows/${userId}`,
     UNFOLLOW: (userId: string) => `/engagement/follows/${userId}`,
-    FOLLOW_STATUS: (userId: string) => `/engagement/follows/${userId}/status`,
-    FOLLOWERS: (userId: string) => `/engagement/followers/${userId}`,
-    FOLLOWING: (userId: string) => `/engagement/following/${userId}`,
-    FOLLOW_STATS: (userId: string) => `/engagement/stats/${userId}`,
+    FOLLOW_STATUS: (userId: string) => `/engagement/follows/${userId}/check`,
+    FOLLOWERS: (userId: string) => `/engagement/follows/${userId}/followers`,
+    FOLLOWING: (userId: string) => `/engagement/follows/${userId}/following`,
+    FOLLOW_STATS: (userId: string) => `/engagement/follows/${userId}/stats`,
   },
 
   // Chat endpoints

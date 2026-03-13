@@ -64,7 +64,7 @@ export const listMessages = async (
  * Mark conversation messages as read
  */
 export const markConversationRead = async (conversationId: string): Promise<void> => {
-  await apiClient.patch(ENDPOINTS.CHAT.MARK_READ(conversationId));
+  await apiClient.post(ENDPOINTS.CHAT.MARK_READ(conversationId));
 };
 
 /**

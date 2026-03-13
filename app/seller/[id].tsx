@@ -12,7 +12,10 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useSellerProfile, useSellerAds, useSellerReviews } from '@/src/hooks';
+import { useSellerProfile, useSellerAds, useSellerReviews, useMe } from '@/src/hooks';
+import { useToggleWishlist } from '@/src/hooks/mutations/useWishlistMutations';
+import { useFollowStatus, useToggleFollow } from '@/src/hooks';
+import { getAvatarUrl } from '@/src/utils/avatar';
 import type { Ad } from '@/src/types';
 
 const { width } = Dimensions.get('window');
@@ -20,30 +23,49 @@ const { width } = Dimensions.get('window');
 export default function SellerProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const [favorites, setFavorites] = useState<Set<string>>(new Set());
 
     const { id } = useLocalSearchParams<{ id: string }>();
+    
+    // Get current user
+    const { data: currentUser } = useMe();
     
     // Fetch seller data
     const { data: seller, isLoading: isLoadingSeller } = useSellerProfile(id);
     const { data: adsData, isLoading: isLoadingAds } = useSellerAds(id, { page: 1, limit: 20, sort: 'recent' });
     const { data: reviewsData } = useSellerReviews(id, { page: 1, limit: 1 });
 
-    const [followed, setFollowed] = useState(false);
+    // Follow functionality
+    const { data: followStatus, isLoading: isLoadingFollowStatus } = useFollowStatus(id, !!id);
+    const { toggle: toggleFollow, isLoading: isFollowLoading } = useToggleFollow();
 
-    const toggleFavorite = (adId: string) => {
-        setFavorites((prev) => {
-            const next = new Set(prev);
-            if (next.has(adId)) {
-                next.delete(adId);
-            } else {
-                next.add(adId);
-            }
-            return next;
-        });
+    // Type-safe follow status
+    const isFollowing = (followStatus as { following?: boolean })?.following ?? false;
+    
+    // Check if viewing own profile
+    const isOwnProfile = currentUser?.id === id;
+
+    // Wishlist functionality
+    const { toggle: toggleWishlist, isLoading: isWishlistLoading } = useToggleWishlist();
+
+    const handleToggleFollow = async () => {
+        if (!seller) return;
+        
+        try {
+            await toggleFollow(seller.id, isFollowing);
+        } catch (error) {
+            console.error('Error toggling follow:', error);
+        }
     };
 
-    if (isLoadingSeller || isLoadingAds) {
+    const handleToggleWishlist = async (ad: Ad) => {
+        try {
+            await toggleWishlist(ad.id, ad.isFavorite || false);
+        } catch (error) {
+            console.error('Error toggling wishlist:', error);
+        }
+    };
+
+    if (isLoadingSeller || isLoadingAds || isLoadingFollowStatus) {
         return (
             <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
                 <ActivityIndicator size="large" color="#4A54DF" />
@@ -78,7 +100,10 @@ export default function SellerProfileScreen() {
             </View>
 
             <View style={styles.profileSection}>
-                <Image source={{ uri: seller.avatarUrl }} style={styles.avatarImage} />
+                <Image 
+                    source={{ uri: seller.avatarUrl || getAvatarUrl(seller.name, 200) }} 
+                    style={styles.avatarImage} 
+                />
                 <Text style={styles.nameText}>{seller.name}</Text>
                 <Text style={styles.joinedText}>Member on Sab Bechdo</Text>
 
@@ -103,28 +128,39 @@ export default function SellerProfileScreen() {
                 </View>
 
                 <View style={styles.actionRow}>
-                    <TouchableOpacity
-                        style={[styles.primaryButton, followed && { backgroundColor: '#10B981' }]}
-                        activeOpacity={0.8}
-                        onPress={() => setFollowed(!followed)}
-                    >
-                        <Text style={styles.primaryButtonText}>{followed ? 'Followed' : 'Follow'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={styles.secondaryButton}
-                        activeOpacity={0.8}
-                        onPress={() => router.push({
-                            pathname: '/chat/[id]',
-                            params: {
-                                id: seller.id,
-                                name: seller.name,
-                                avatar: seller.avatarUrl,
-                                online: 'false'
-                            }
-                        })}
-                    >
-                        <Text style={styles.secondaryButtonText}>Message</Text>
-                    </TouchableOpacity>
+                    {!isOwnProfile && (
+                        <>
+                            <TouchableOpacity
+                                style={[styles.primaryButton, isFollowing && { backgroundColor: '#10B981' }]}
+                                activeOpacity={0.8}
+                                onPress={handleToggleFollow}
+                                disabled={isFollowLoading}
+                            >
+                                {isFollowLoading ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                ) : (
+                                    <Text style={styles.primaryButtonText}>
+                                        {isFollowing ? 'Followed' : 'Follow'}
+                                    </Text>
+                                )}
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.secondaryButton}
+                                activeOpacity={0.8}
+                                onPress={() => router.push({
+                                    pathname: '/chat/[id]',
+                                    params: {
+                                        id: seller.id,
+                                        name: seller.name,
+                                        avatar: seller.avatarUrl,
+                                        online: 'false'
+                                    }
+                                })}
+                            >
+                                <Text style={styles.secondaryButtonText}>Message</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
                 </View>
             </View>
 
@@ -145,7 +181,7 @@ export default function SellerProfileScreen() {
                 showsVerticalScrollIndicator={false}
                 ListHeaderComponent={renderHeader}
                 renderItem={({ item }: { item: Ad }) => {
-                    const isFavorite = favorites.has(item.id);
+                    const isFavorite = item.isFavorite || false;
                     const firstImage = item.photoUrls?.[0] || item.videoUrl;
                     return (
                         <TouchableOpacity
@@ -158,15 +194,20 @@ export default function SellerProfileScreen() {
                         >
                             {firstImage && <Image source={{ uri: firstImage }} style={styles.cardImage} />}
                             <TouchableOpacity
-                                style={styles.favoriteBtn}
+                                style={[styles.favoriteBtn, isWishlistLoading && styles.favoriteDisabled]}
                                 activeOpacity={0.8}
-                                onPress={() => toggleFavorite(item.id)}
+                                onPress={() => handleToggleWishlist(item)}
+                                disabled={isWishlistLoading}
                             >
-                                <Ionicons
-                                    name={isFavorite ? "heart" : "heart-outline"}
-                                    size={18}
-                                    color={isFavorite ? "#ff3b30" : "#4A54DF"}
-                                />
+                                {isWishlistLoading ? (
+                                    <ActivityIndicator size="small" color="#4A54DF" />
+                                ) : (
+                                    <Ionicons
+                                        name={isFavorite ? "heart" : "heart-outline"}
+                                        size={18}
+                                        color={isFavorite ? "#ff3b30" : "#4A54DF"}
+                                    />
+                                )}
                             </TouchableOpacity>
                             <View style={styles.cardContent}>
                                 <Text style={styles.price}>Rs {item.price.toLocaleString('en-PK')}</Text>
@@ -353,6 +394,9 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.9)',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    favoriteDisabled: {
+        opacity: 0.6,
     },
     cardContent: {
         padding: 12,

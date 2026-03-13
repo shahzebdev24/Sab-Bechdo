@@ -15,7 +15,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useAdDetail, useToggleWishlist } from '@/src/hooks';
+import { useAdDetail, useToggleWishlist, useCreateOrGetConversation, useProfile } from '@/src/hooks';
 import { getAvatarUrl } from '@/src/utils/avatar';
 
 const { width } = Dimensions.get('window');
@@ -32,8 +32,17 @@ export default function ProductDetailScreen() {
     // Fetch ad details from backend
     const { data: ad, isLoading } = useAdDetail(id);
 
+    // Get current user profile
+    const { data: currentUser } = useProfile();
+
     // Wishlist toggle
     const { toggle: toggleWishlist, isLoading: isTogglingWishlist } = useToggleWishlist();
+
+    // Create or get conversation
+    const { mutateAsync: createConversation, isPending: isCreatingConversation } = useCreateOrGetConversation();
+
+    // Check if current user is the owner of this ad
+    const isOwnAd = currentUser?.id === ad?.owner?.id;
 
     // Sync isFavorite with ad data
     useEffect(() => {
@@ -49,6 +58,59 @@ export default function ProductDetailScreen() {
             setIsFavorite(!isFavorite);
         } catch (error) {
             console.error('Failed to toggle wishlist:', error);
+        }
+    };
+
+    const handleChatPress = async () => {
+        if (!ad) {
+            console.log('[Product] No ad data available');
+            return;
+        }
+
+        // Check if user is trying to chat with themselves
+        if (isOwnAd) {
+            Alert.alert('Cannot Chat', 'You cannot start a conversation with yourself');
+            return;
+        }
+        
+        // Get owner info before async operation
+        const sellerId = ad.owner?.id;
+        
+        if (!sellerId) {
+            console.log('[Product] No seller ID available');
+            Alert.alert('Error', 'Seller information not available');
+            return;
+        }
+        
+        console.log('[Product] Creating conversation with seller:', sellerId, 'for ad:', ad.id);
+        
+        try {
+            // Create or get conversation with seller and specific ad
+            const conversation = await createConversation({
+                sellerId: sellerId,
+                adId: ad.id, // Required - specifies which ad to chat about
+            });
+            
+            console.log('[Product] Conversation created/retrieved:', conversation.id);
+            
+            // Navigate to chat with conversation ID
+            router.push({
+                pathname: '/chat/[id]',
+                params: {
+                    id: conversation.id,
+                }
+            });
+        } catch (error: any) {
+            console.error('[Product] Failed to create conversation:', error);
+            
+            // Handle specific error cases
+            if (error.message?.includes('cannot start a conversation with yourself')) {
+                Alert.alert('Cannot Chat', 'You cannot start a conversation with yourself');
+            } else if (error.message?.includes('no longer available')) {
+                Alert.alert('Ad Unavailable', 'This ad is no longer available');
+            } else {
+                Alert.alert('Error', 'Failed to start conversation. Please try again.');
+            }
         }
     };
 
@@ -262,32 +324,41 @@ export default function ProductDetailScreen() {
 
             {/* Bottom Sticky Action Bar */}
             <View style={[styles.bottomActionBar, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-                <TouchableOpacity
-                    style={styles.chatButton}
-                    activeOpacity={0.8}
-                    onPress={() => router.push({
-                        pathname: '/chat/[id]',
-                        params: {
-                            id: ownerId,
-                            name: ownerName,
-                            avatar: ownerAvatar,
-                            online: 'false'
-                        }
-                    })}
-                >
-                    <Ionicons name="chatbubbles" size={20} color="#ffffff" />
-                    <Text style={styles.chatButtonText}>Chat</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={styles.offerButton}
-                    activeOpacity={0.8}
-                    onPress={() => router.push({
-                        pathname: '/make-offer',
-                        params: { title: ad.title, price: ad.price.toString() }
-                    })}
-                >
-                    <Text style={styles.offerButtonText}>Make Offer</Text>
-                </TouchableOpacity>
+                {!isOwnAd ? (
+                    <>
+                        <TouchableOpacity
+                            style={styles.chatButton}
+                            activeOpacity={0.8}
+                            onPress={handleChatPress}
+                            disabled={isCreatingConversation}
+                        >
+                            {isCreatingConversation ? (
+                                <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                                <>
+                                    <Ionicons name="chatbubbles" size={20} color="#ffffff" />
+                                    <Text style={styles.chatButtonText}>Chat</Text>
+                                </>
+                            )}
+                        </TouchableOpacity>
+                        {/* TODO: Implement Make Offer feature - Currently commented out */}
+                        {/* <TouchableOpacity
+                            style={styles.offerButton}
+                            activeOpacity={0.8}
+                            onPress={() => router.push({
+                                pathname: '/make-offer',
+                                params: { title: ad.title, price: ad.price.toString() }
+                            })}
+                        >
+                            <Text style={styles.offerButtonText}>Make Offer</Text>
+                        </TouchableOpacity> */}
+                    </>
+                ) : (
+                    <View style={styles.ownAdContainer}>
+                        <Ionicons name="information-circle" size={20} color="#6b7280" />
+                        <Text style={styles.ownAdText}>This is your ad</Text>
+                    </View>
+                )}
             </View>
         </View>
     );
@@ -541,5 +612,20 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(0,0,0,0.6)',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    ownAdContainer: {
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
+        backgroundColor: '#f3f4f6',
+        borderRadius: 12,
+    },
+    ownAdText: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#6b7280',
+        marginLeft: 8,
     },
 });

@@ -18,7 +18,7 @@ export type AdCategory =
 
 export type AdCondition = 'new' | 'used';
 
-export type AdStatus = 'active' | 'pending' | 'sold' | 'archived';
+export type AdStatus = 'active' | 'pending' | 'sold' | 'archived' | 'rejected';
 
 export interface AdLocation {
   latitude: number;
@@ -42,6 +42,9 @@ export interface Ad {
   status: AdStatus;
   views: number;
   isFavorite?: boolean;
+  rejectionReason?: string;
+  resubmittedAt?: string;
+  previousStatus?: AdStatus;
   createdAt: string;
   updatedAt: string;
 }

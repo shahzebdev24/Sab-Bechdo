@@ -19,7 +19,7 @@ import {
     useMarkAllNotificationsRead 
 } from '@/src/hooks';
 import type { Notification, NotificationType } from '@/src/types';
-import { socketClient } from '@/src/api/socket';
+import { useSocket } from '@/src/providers/SocketProvider';
 
 // Simple time ago formatter
 const formatTimeAgo = (dateString: string): string => {
@@ -48,6 +48,7 @@ const formatTimeAgo = (dateString: string): string => {
 
 export default function NotificationsScreen() {
     const [refreshing, setRefreshing] = useState(false);
+    const { isConnected } = useSocket();
     
     // Fetch notifications
     const { data: notificationsData, isLoading, refetch } = useNotifications({
@@ -61,24 +62,6 @@ export default function NotificationsScreen() {
 
     const notifications = notificationsData?.notifications || [];
     const unreadCount = notificationsData?.unreadCount || 0;
-
-    // Real-time notification listener
-    useEffect(() => {
-        // Connect socket
-        socketClient.connect();
-
-        // Listen for new notifications
-        const cleanup = socketClient.onNotificationNew((notification) => {
-            console.log('New notification received:', notification);
-            // Refetch notifications to update list
-            refetch();
-        });
-
-        // Cleanup on unmount
-        return () => {
-            cleanup();
-        };
-    }, [refetch]);
 
     const handleRefresh = async () => {
         setRefreshing(true);

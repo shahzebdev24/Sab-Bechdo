@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { QueryProvider } from '@/src/providers/QueryProvider';
 import { AuthProvider } from '@/src/providers/AuthProvider';
+import { SocketProvider } from '@/src/providers/SocketProvider';
 
 export const unstable_settings = {
   anchor: 'login',
@@ -34,7 +35,9 @@ export default function RootLayout() {
   return (
     <QueryProvider>
       <AuthProvider>
-        <RootLayoutNav />
+        <SocketProvider>
+          <RootLayoutNav />
+        </SocketProvider>
       </AuthProvider>
     </QueryProvider>
   );

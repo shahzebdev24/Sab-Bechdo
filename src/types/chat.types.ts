@@ -14,16 +14,35 @@ export interface Message {
   updatedAt: string;
 }
 
+/**
+ * Ad reference in conversation
+ * Contains essential ad info for chat context
+ */
+export interface ConversationAd {
+  id: string;
+  title: string;
+  photoUrls: string[];
+  price: number;
+  currency: string;
+  status: 'active' | 'pending' | 'sold' | 'archived';
+  condition: 'new' | 'used';
+}
+
 export interface Conversation {
   id: string;
   participants: User[];
-  lastMessage?: Message;
+  buyer: User;
+  seller: User;
+  ad: ConversationAd; // Required - every conversation is about a specific ad
+  lastMessage?: string | Message;
+  lastMessageAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface CreateConversationRequest {
-  participantId: string;
+  sellerId: string;
+  adId: string; // Required - must specify which ad to chat about
 }
 
 export interface PaginatedConversationsResponse {
@@ -65,4 +84,5 @@ export interface MessageNewEvent {
 export interface MessagesReadEvent {
   conversationId: string;
   userId: string;
+  count: number;
 }
