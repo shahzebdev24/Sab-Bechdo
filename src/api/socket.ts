@@ -108,19 +108,23 @@ class SocketClient {
       console.error('Socket connection error:', error);
       this.reconnectAttempts++;
       
-      // If authentication failed, try to get fresh token and reconnect
-      if (error.message === 'Authentication failed') {
-        console.log('Authentication failed, attempting reconnect with fresh token');
+      // If authentication failed, disconnect and let AuthProvider handle it
+      if (error.message === 'Authentication failed' || error.message.includes('jwt') || error.message.includes('token')) {
+        console.log('Socket authentication failed - token may be expired');
         
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          // Wait a bit before reconnecting
-          setTimeout(async () => {
-            await this.connect();
-          }, 2000);
-        }
+        // Don't keep trying with bad token
+        this.disconnect();
+        return;
       }
       
-      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      // For other errors, try to reconnect with fresh token
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+        // Wait before reconnecting
+        setTimeout(async () => {
+          await this.connect();
+        }, 2000 * this.reconnectAttempts); // Exponential backoff
+      } else {
         console.error('Max reconnection attempts reached');
         this.disconnect();
       }

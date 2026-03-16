@@ -16,14 +16,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
 import { useMe, useAdsList, useToggleWishlist } from '@/src/hooks';
+import { useCategories } from '@/src/hooks/queries/useCategories';
 import { getAvatarUrl } from '@/src/utils/avatar';
 import type { Ad } from '@/src/types';
-
-type Category = {
-  id: string;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-};
 
 type Listing = {
   id: string;
@@ -33,17 +28,46 @@ type Listing = {
   image: { uri: string } | null;
 };
 
-const CATEGORIES: Category[] = [
-  { id: 'mobiles', label: 'Mobiles', icon: 'phone-portrait-outline' },
-  { id: 'cars', label: 'Cars', icon: 'car-sport-outline' },
-  { id: 'property', label: 'Property', icon: 'home-outline' },
-  { id: 'jobs', label: 'Jobs', icon: 'briefcase-outline' },
-  { id: 'electronics', label: 'Electronics', icon: 'tv-outline' },
-];
+// Map category names to icons
+const getCategoryIcon = (categoryName: string): keyof typeof Ionicons.glyphMap => {
+  const iconMap: Record<string, keyof typeof Ionicons.glyphMap> = {
+    'Electronics': 'tv-outline',
+    'Vehicles': 'car-sport-outline',
+    'Property': 'home-outline',
+    'Fashion': 'shirt-outline',
+    'Home & Garden': 'leaf-outline',
+    'Sports': 'football-outline',
+    'Books': 'book-outline',
+    'Pets': 'paw-outline',
+    'Services': 'construct-outline',
+    'Other': 'apps-outline',
+  };
+  return iconMap[categoryName] || 'apps-outline';
+};
 
-const HomeHeader = React.memo(({ searchQuery, setSearchQuery, userName, userAvatar }: { searchQuery: string, setSearchQuery: (text: string) => void, userName?: string, userAvatar?: string }) => {
+const HomeHeader = React.memo(({ 
+  searchQuery, 
+  setSearchQuery, 
+  userName, 
+  userAvatar,
+  categories,
+  categoriesLoading,
+  onCategoryPress,
+  selectedCategory,
+}: { 
+  searchQuery: string;
+  setSearchQuery: (text: string) => void;
+  userName?: string;
+  userAvatar?: string;
+  categories: Array<{ id: string; name: string; icon: keyof typeof Ionicons.glyphMap }>;
+  categoriesLoading: boolean;
+  onCategoryPress: (categoryName: string) => void;
+  selectedCategory?: string;
+}) => {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
-  const keywords = ['mobiles', 'cars', 'property', 'jobs', 'electronics'];
+  const keywords = categories.length > 0 
+    ? categories.slice(0, 5).map(c => c.name.toLowerCase())
+    : ['mobiles', 'cars', 'property', 'jobs', 'electronics'];
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -133,21 +157,48 @@ const HomeHeader = React.memo(({ searchQuery, setSearchQuery, userName, userAvat
         </TouchableOpacity>
       </View>
 
-      <FlatList
-        data={CATEGORIES}
-        keyExtractor={(item) => item.id}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryContent}
-        renderItem={({ item }) => (
-          <TouchableOpacity style={styles.categoryItem} activeOpacity={0.7}>
-            <View style={styles.categoryIconCircle}>
-              <Ionicons name={item.icon} size={24} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.categoryLabel}>{item.label}</Text>
-          </TouchableOpacity>
-        )}
-      />
+      {categoriesLoading ? (
+        <View style={styles.categoryLoadingContainer}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+        </View>
+      ) : categories.length > 0 ? (
+        <FlatList
+          data={categories}
+          keyExtractor={(item) => item.id}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryContent}
+          renderItem={({ item }) => {
+            const isSelected = selectedCategory === item.name;
+            return (
+              <TouchableOpacity 
+                style={styles.categoryItem} 
+                activeOpacity={0.7}
+                onPress={() => onCategoryPress(item.name)}
+              >
+                <View style={[
+                  styles.categoryIconCircle,
+                  isSelected && styles.categoryIconCircleSelected
+                ]}>
+                  <Ionicons 
+                    name={item.icon} 
+                    size={24} 
+                    color={isSelected ? '#fff' : theme.colors.primary} 
+                  />
+                </View>
+                <Text style={[
+                  styles.categoryLabel,
+                  isSelected && styles.categoryLabelSelected
+                ]}>{item.name}</Text>
+              </TouchableOpacity>
+            );
+          }}
+        />
+      ) : (
+        <View style={styles.categoryEmptyContainer}>
+          <Text style={styles.categoryEmptyText}>No categories available</Text>
+        </View>
+      )}
 
       <View style={[styles.sectionHeader, { marginTop: 10 }]}>
         <Text style={styles.sectionTitle}>Recommended for You</Text>
@@ -161,20 +212,40 @@ const { width } = Dimensions.get('window');
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | undefined>(undefined);
   const [togglingAdId, setTogglingAdId] = useState<string | null>(null);
   
   // Fetch current user for avatar
   const { data: user } = useMe();
+  
+  // Fetch categories from backend
+  const { data: categoriesData, isLoading: categoriesLoading } = useCategories();
   
   // Fetch ads from backend
   const { data: adsData, isLoading } = useAdsList({
     page: 1,
     limit: 20,
     sort: 'recent',
+    category: selectedCategory,
   });
 
   // Wishlist toggle
   const { toggle: toggleWishlist } = useToggleWishlist();
+
+  // Transform categories for display
+  const categories = React.useMemo(() => {
+    if (!categoriesData) return [];
+    return categoriesData.map(cat => ({
+      id: cat.id || cat._id,
+      name: cat.name,
+      icon: getCategoryIcon(cat.name),
+    }));
+  }, [categoriesData]);
+
+  // Handle category selection
+  const handleCategoryPress = (categoryName: string) => {
+    setSelectedCategory(prev => prev === categoryName ? undefined : categoryName);
+  };
 
   const listings: Listing[] = React.useMemo(() => {
     if (!adsData?.ads) {
@@ -190,9 +261,13 @@ export default function HomeScreen() {
     }));
   }, [adsData]);
 
+  // Filter by search query only (category filtering is done by API)
   const filteredListings = listings.filter((item) =>
     item.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // Show empty state when no results
+  const showEmptyState = !isLoading && filteredListings.length === 0;
 
   const toggleFavorite = async (id: string, isFavorite: boolean) => {
     try {
@@ -267,35 +342,60 @@ export default function HomeScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {isLoading && listings.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={{ marginTop: 16, color: theme.colors.textSecondary }}>Loading ads...</Text>
-        </View>
-      ) : (
-        <FlatList
-          key={`flatlist-${listings.length}`}
-          data={filteredListings}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={<HomeHeader searchQuery={searchQuery} setSearchQuery={setSearchQuery} userName={user?.name} userAvatar={user?.avatarUrl} />}
-          renderItem={renderItem}
-          initialNumToRender={10}
-          maxToRenderPerBatch={10}
-          windowSize={10}
-          removeClippedSubviews={false}
-          extraData={listings}
-          ListEmptyComponent={
+      <FlatList
+        key={`flatlist-${listings.length}`}
+        data={filteredListings}
+        keyExtractor={(item) => item.id}
+        numColumns={2}
+        columnWrapperStyle={showEmptyState ? undefined : styles.columnWrapper}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <HomeHeader 
+            searchQuery={searchQuery} 
+            setSearchQuery={setSearchQuery} 
+            userName={user?.name} 
+            userAvatar={user?.avatarUrl}
+            categories={categories}
+            categoriesLoading={categoriesLoading}
+            onCategoryPress={handleCategoryPress}
+            selectedCategory={selectedCategory}
+          />
+        }
+        renderItem={renderItem}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
+        removeClippedSubviews={false}
+        extraData={[listings, selectedCategory]}
+        ListEmptyComponent={
+          isLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={theme.colors.primary} />
+              <Text style={styles.loadingText}>Loading ads...</Text>
+            </View>
+          ) : (
             <View style={styles.emptyContainer}>
               <Ionicons name="search-outline" size={64} color="#CBD5E1" />
-              <Text style={styles.emptyText}>No items found{searchQuery ? ` for "${searchQuery}"` : ''}</Text>
+              <Text style={styles.emptyText}>
+                {selectedCategory 
+                  ? `No ads found in "${selectedCategory}" category` 
+                  : searchQuery 
+                    ? `No items found for "${searchQuery}"` 
+                    : 'No ads available'}
+              </Text>
+              {selectedCategory && (
+                <TouchableOpacity 
+                  style={styles.clearFilterButton}
+                  onPress={() => setSelectedCategory(undefined)}
+                >
+                  <Text style={styles.clearFilterText}>Clear Filter</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          }
-        />
-      )}
+          )
+        }
+      />
     </View>
   );
 }
@@ -493,10 +593,31 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 2,
   },
+  categoryIconCircleSelected: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
   categoryLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: '#64748B',
+  },
+  categoryLabelSelected: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+  },
+  categoryLoadingContainer: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  categoryEmptyContainer: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  categoryEmptyText: {
+    fontSize: 13,
+    color: '#94A3B8',
+    fontWeight: '500',
   },
   listContent: {
     paddingBottom: 40,
@@ -571,13 +692,37 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     flex: 1,
   },
+  loadingContainer: {
+    alignItems: 'center',
+    marginTop: 60,
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    marginTop: 16,
+    color: theme.colors.textSecondary,
+    fontSize: 15,
+  },
   emptyContainer: {
     alignItems: 'center',
     marginTop: 60,
+    paddingHorizontal: 24,
   },
   emptyText: {
     marginTop: 12,
     color: '#94A3B8',
     fontSize: 15,
+    textAlign: 'center',
+  },
+  clearFilterButton: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 12,
+  },
+  clearFilterText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

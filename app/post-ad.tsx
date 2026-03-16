@@ -22,23 +22,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 
 import { theme } from '@/theme';
-import { useCreateAd, useUpdateAd, useUploadMedia, useAdDetail } from '@/src/hooks';
+import { useCreateAd, useUpdateAd, useUploadMedia, useAdDetail, useCategories } from '@/src/hooks';
 import type { AdCategory, AdCondition, AdLocation } from '@/src/types';
 
 const MAX_PHOTOS = 5;
-
-const CATEGORY_OPTIONS: { label: string; value: AdCategory }[] = [
-  { label: 'Electronics', value: 'electronics' },
-  { label: 'Vehicles', value: 'vehicles' },
-  { label: 'Property', value: 'property' },
-  { label: 'Fashion', value: 'fashion' },
-  { label: 'Home & Garden', value: 'home_garden' },
-  { label: 'Sports', value: 'sports' },
-  { label: 'Books', value: 'books' },
-  { label: 'Pets', value: 'pets' },
-  { label: 'Services', value: 'services' },
-  { label: 'Other', value: 'other' },
-];
 
 type PhotoItem = {
   id: string;
@@ -48,6 +35,20 @@ type PhotoItem = {
 export default function PostAdScreen() {
   const params = useLocalSearchParams<{ editId?: string }>();
   const isEditMode = !!params.editId;
+
+  // Fetch categories from API
+  const { data: categoriesData, isLoading: isCategoriesLoading } = useCategories();
+
+  // Transform categories to options format and filter only active
+  const CATEGORY_OPTIONS = useMemo(() => {
+    if (!categoriesData) return [];
+    return categoriesData
+      .filter(cat => cat.isActive) // Only active categories
+      .map(cat => ({
+        label: cat.name,
+        value: cat.name, // Use original name, not snake_case
+      }));
+  }, [categoriesData]);
   
   // Fetch ad data if in edit mode
   const { data: existingAd, isLoading: isLoadingAd } = useAdDetail(
@@ -637,27 +638,36 @@ export default function PostAdScreen() {
             onPress={() => setCategoryModalVisible(false)}>
             <View style={styles.modalSheet}>
               <Text style={styles.modalTitle}>Select category</Text>
-              {CATEGORY_OPTIONS.map((option) => {
-                const isActive = option.value === selectedCategory;
-                return (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.modalItem,
-                      isActive && styles.modalItemActive,
-                    ]}
-                    activeOpacity={0.9}
-                    onPress={() => handleSelectCategory(option.value)}>
-                    <Text
+              {isCategoriesLoading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                  <Text style={styles.loadingText}>Loading categories...</Text>
+                </View>
+              ) : CATEGORY_OPTIONS.length === 0 ? (
+                <Text style={styles.emptyText}>No categories available</Text>
+              ) : (
+                CATEGORY_OPTIONS.map((option) => {
+                  const isActive = option.value === selectedCategory;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
                       style={[
-                        styles.modalItemText,
-                        isActive && styles.modalItemTextActive,
-                      ]}>
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
+                        styles.modalItem,
+                        isActive && styles.modalItemActive,
+                      ]}
+                      activeOpacity={0.9}
+                      onPress={() => handleSelectCategory(option.value)}>
+                      <Text
+                        style={[
+                          styles.modalItemText,
+                          isActive && styles.modalItemTextActive,
+                        ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })
+              )}
             </View>
           </Pressable>
         </Modal>
@@ -974,6 +984,22 @@ const styles = StyleSheet.create({
   modalItemTextActive: {
     color: theme.colors.textPrimary,
     fontWeight: '600',
+  },
+  loadingContainer: {
+    padding: theme.spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    marginTop: theme.spacing.md,
+    fontSize: theme.fontSizes.sm,
+    color: theme.colors.textSecondary,
+  },
+  emptyText: {
+    padding: theme.spacing.xl,
+    textAlign: 'center',
+    fontSize: theme.fontSizes.sm,
+    color: theme.colors.textSecondary,
   },
   removeVideoBtn: {
     marginLeft: 'auto',

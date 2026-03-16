@@ -5,7 +5,8 @@
 
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useRouter, useSegments } from 'expo-router';
-import { isAuthenticated } from '../utils/storage';
+import { isAuthenticated, removeTokens } from '../utils/storage';
+import { apiClient } from '../api/client';
 
 interface AuthContextType {
   isLoggedIn: boolean;
@@ -31,12 +32,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const segments = useSegments();
 
-  // Check authentication status
+  // Check authentication status with API validation
   const checkAuth = async () => {
     try {
       const authenticated = await isAuthenticated();
-      setIsLoggedIn(authenticated);
+      
+      if (!authenticated) {
+        setIsLoggedIn(false);
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate token by making a test API call
+      try {
+        await apiClient.get('/users/me');
+        setIsLoggedIn(true);
+      } catch (error: any) {
+        // Token is invalid or expired
+        console.log('Token validation failed, clearing session');
+        await removeTokens();
+        setIsLoggedIn(false);
+      }
     } catch (error) {
+      console.log('Auth check failed:', error);
       setIsLoggedIn(false);
     } finally {
       setIsLoading(false);

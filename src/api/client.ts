@@ -132,9 +132,15 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshError) {
         // Refresh failed, logout user
+        console.log('Token refresh failed, clearing session');
         await removeTokens();
         processQueue(refreshError, null);
-        return Promise.reject(new ApiError('Session expired', 401));
+        
+        // Force app to re-check auth state
+        // This will trigger AuthProvider to redirect to login
+        isRefreshing = false;
+        
+        return Promise.reject(new ApiError('Session expired. Please login again.', 401));
       } finally {
         isRefreshing = false;
       }

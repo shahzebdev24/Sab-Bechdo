@@ -16,3 +16,4 @@ export * from './useEngagement';
 export * from './useChat';
 export * from './useNotifications';
 export * from './useOffers';
+export * from './useCategories';
