@@ -24,8 +24,10 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { theme } from '@/theme';
 import { useCreateAd, useUpdateAd, useUploadMedia, useAdDetail, useCategories } from '@/src/hooks';
 import type { AdCategory, AdCondition, AdLocation } from '@/src/types';
+import { MEDIA_VALIDATION, AD_VALIDATION, formatFileSize, getFileSize, validateImage, validateVideo } from '@/src/constants/validation';
+import { getVideoSize } from '@/src/utils/video-compression';
 
-const MAX_PHOTOS = 5;
+const MAX_PHOTOS = MEDIA_VALIDATION.MAX_PHOTOS_PER_AD;
 
 type PhotoItem = {
   id: string;
@@ -66,6 +68,7 @@ export default function PostAdScreen() {
   const [locationState, setLocationState] = useState<AdLocation | null>(null);
   const [videoUri, setVideoUri] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
   const { mutate: createAd, isPending: isCreatingAd } = useCreateAd();
   const { mutate: updateAd, isPending: isUpdatingAd } = useUpdateAd();
@@ -129,23 +132,61 @@ export default function PostAdScreen() {
         allowsMultipleSelection: true,
         selectionLimit: remaining,
         quality: 0.7, // Reduced quality for faster processing
+        // Ensure we get the file info we need
+        exif: false,
+        base64: false,
       });
 
       if (result.canceled || !result.assets?.length) {
         return;
       }
 
-      const newItems: PhotoItem[] = result.assets
-        .filter((asset): asset is ImagePicker.ImagePickerAsset => !!asset.uri)
-        .map((asset, index) => ({
-          id: `${Date.now()}-${index}`,
-          uri: asset.uri,
-        }));
+      // Validate each image
+      const validatedAssets = await Promise.all(
+        result.assets
+          .filter((asset): asset is ImagePicker.ImagePickerAsset => !!asset.uri)
+          .map(async (asset) => {
+            // Get file size
+            const size = await getFileSize(asset.uri);
+
+            // Validate image
+            const validation = validateImage(asset.uri, size);
+
+            return { asset, size, validation };
+          })
+      );
+
+      // Check for invalid images
+      const invalidImages = validatedAssets.filter(v => !v.validation.valid);
+      if (invalidImages.length > 0) {
+        const errors = invalidImages.map(v => v.validation.error || 'Invalid image');
+        setValidationErrors(errors);
+        Alert.alert(
+          'Invalid Images',
+          errors.join('\n\n')
+        );
+        return;
+      }
+
+      // Clear validation errors
+      setValidationErrors([]);
+
+      const newItems: PhotoItem[] = validatedAssets.map(({ asset }, index) => ({
+        id: `${Date.now()}-${index}`,
+        uri: asset.uri,
+      }));
 
       setPhotos((prev) => [...prev, ...newItems].slice(0, MAX_PHOTOS));
-    } catch (error) {
-      console.warn('Failed to pick images', error);
-      Alert.alert('Something went wrong', 'Unable to open your photo library right now.');
+    } catch (error: any) {
+      console.error('Failed to pick images:', error);
+      
+      // More specific error messages
+      let errorMessage = 'Unable to open your photo library right now.';
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Something went wrong', errorMessage);
     }
   }, [photos.length]);
 
@@ -168,8 +209,47 @@ export default function PostAdScreen() {
         quality: 1,
       });
 
-      if (!result.canceled) {
-        setVideoUri(result.assets[0].uri);
+      if (!result.canceled && result.assets[0]) {
+        const videoAsset = result.assets[0];
+        
+        // Get file size
+        const size = await getVideoSize(videoAsset.uri);
+        
+        // Validate video
+        const validation = validateVideo(videoAsset.uri, size);
+        
+        if (!validation.valid) {
+          setValidationErrors([validation.error || 'Invalid video']);
+          Alert.alert(
+            'Invalid Video',
+            validation.error || 'Please select a valid video file.'
+          );
+          return;
+        }
+        
+        // Clear validation errors
+        setValidationErrors([]);
+        
+        // Show size warning if large
+        if (size > MEDIA_VALIDATION.MAX_VIDEO_SIZE * 0.8) { // 80% of limit
+          Alert.alert(
+            'Large Video',
+            `Video size: ${formatFileSize(size)}. Large videos may take longer to upload. Continue?`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { 
+                text: 'Continue', 
+                onPress: () => {
+                  console.log(`Video selected: ${formatFileSize(size)}`);
+                  setVideoUri(videoAsset.uri);
+                }
+              }
+            ]
+          );
+        } else {
+          console.log(`Video selected: ${formatFileSize(size)}`);
+          setVideoUri(videoAsset.uri);
+        }
       }
     } catch (error) {
       console.warn('Failed to pick video', error);
@@ -256,9 +336,48 @@ export default function PostAdScreen() {
       return;
     }
 
+    // Validate title
+    if (trimmedTitle.length < AD_VALIDATION.TITLE.MIN_LENGTH) {
+      Alert.alert(
+        'Invalid title',
+        `Title must be at least ${AD_VALIDATION.TITLE.MIN_LENGTH} characters long.`
+      );
+      return;
+    }
+
+    if (trimmedTitle.length > AD_VALIDATION.TITLE.MAX_LENGTH) {
+      Alert.alert(
+        'Invalid title',
+        `Title must not exceed ${AD_VALIDATION.TITLE.MAX_LENGTH} characters.`
+      );
+      return;
+    }
+
+    // Validate description
+    if (description.trim().length < AD_VALIDATION.DESCRIPTION.MIN_LENGTH) {
+      Alert.alert(
+        'Invalid description',
+        `Description must be at least ${AD_VALIDATION.DESCRIPTION.MIN_LENGTH} characters long.`
+      );
+      return;
+    }
+
+    if (description.trim().length > AD_VALIDATION.DESCRIPTION.MAX_LENGTH) {
+      Alert.alert(
+        'Invalid description',
+        `Description must not exceed ${AD_VALIDATION.DESCRIPTION.MAX_LENGTH} characters.`
+      );
+      return;
+    }
+
     const numericPrice = Number(price.replace(/[^\d.]/g, ''));
     if (!numericPrice || Number.isNaN(numericPrice) || numericPrice <= 0) {
       Alert.alert('Invalid price', 'Please enter a valid price in PKR.');
+      return;
+    }
+
+    if (numericPrice > AD_VALIDATION.PRICE.MAX) {
+      Alert.alert('Invalid price', 'Price is too high. Please enter a reasonable amount.');
       return;
     }
 
@@ -290,28 +409,40 @@ export default function PostAdScreen() {
         const formData = new FormData();
         
         newPhotos.forEach((photo, index) => {
+          // Get file extension from URI
+          const uriParts = photo.uri.split('.');
+          const fileType = uriParts[uriParts.length - 1];
+          
           formData.append('files', {
             uri: photo.uri,
-            type: 'image/jpeg',
-            name: `photo_${index}.jpg`,
+            type: `image/${fileType === 'png' ? 'png' : 'jpeg'}`,
+            name: `photo_${Date.now()}_${index}.${fileType}`,
           } as any);
         });
 
+        console.log('Uploading photos:', newPhotos.length);
         const uploadResult = await uploadMedia(formData);
+        console.log('Photos uploaded successfully:', uploadResult.files.length);
         uploadedPhotoUrls = [...uploadedPhotoUrls, ...uploadResult.files.map(file => file.secureUrl)];
       }
 
       // Upload video if it's new (not existing URL)
       let uploadedVideoUrl: string | undefined = videoUri || undefined;
       if (videoUri && !videoUri.startsWith('http')) {
+        // Get file extension from URI
+        const uriParts = videoUri.split('.');
+        const fileType = uriParts[uriParts.length - 1];
+        
         const videoFormData = new FormData();
         videoFormData.append('files', {
           uri: videoUri,
-          type: 'video/mp4',
-          name: 'video.mp4',
+          type: `video/${fileType === 'mov' ? 'quicktime' : 'mp4'}`,
+          name: `video_${Date.now()}.${fileType}`,
         } as any);
 
+        console.log('Uploading video...');
         const videoUploadResult = await uploadMedia(videoFormData);
+        console.log('Video uploaded successfully');
         uploadedVideoUrl = videoUploadResult.files[0]?.secureUrl;
       }
 
@@ -379,11 +510,25 @@ export default function PostAdScreen() {
       }
     } catch (error: any) {
       setIsUploading(false);
-      console.error('Failed to upload media', error);
-      Alert.alert(
-        'Upload Failed',
-        error.message || 'Failed to upload media. Please check your connection and try again.'
-      );
+      console.error('Failed to upload media:', {
+        message: error.message,
+        response: error.response,
+        stack: error.stack,
+      });
+      
+      // More detailed error message
+      let errorMessage = 'Failed to upload media. Please check your connection and try again.';
+      if (error.message?.includes('timeout')) {
+        errorMessage = 'Upload timeout. Please check your internet connection and try again.';
+      } else if (error.message?.includes('Network')) {
+        errorMessage = 'Network error. Please check your internet connection.';
+      } else if (error.response?.status === 413) {
+        errorMessage = 'File too large. Please select smaller files.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      Alert.alert('Upload Failed', errorMessage);
     }
   }, [
     condition,
@@ -508,11 +653,25 @@ export default function PostAdScreen() {
             </View>
           </View>
 
+          {/* Validation Errors */}
+          {validationErrors.length > 0 && (
+            <View style={styles.errorContainer}>
+              <View style={styles.errorHeader}>
+                <Ionicons name="alert-circle" size={20} color="#EF4444" />
+                <Text style={styles.errorTitle}>Upload Error</Text>
+              </View>
+              {validationErrors.map((error, index) => (
+                <Text key={index} style={styles.errorText}>• {error}</Text>
+              ))}
+            </View>
+          )}
+
           <View style={styles.formCard}>
             <TextInput
               placeholder="Title"
               style={styles.input}
               placeholderTextColor="#94A3B8"
+              maxLength={AD_VALIDATION.TITLE.MAX_LENGTH}
               value={title}
               onChangeText={setTitle}
             />
@@ -600,20 +759,22 @@ export default function PostAdScreen() {
                 placeholder="Description"
                 placeholderTextColor="#94A3B8"
                 multiline
-                maxLength={500}
+                maxLength={AD_VALIDATION.DESCRIPTION.MAX_LENGTH}
                 value={description}
                 onChangeText={setDescription}
               />
-              <Text style={styles.charCount}>{descriptionCount} / 500</Text>
             </View>
           </View>
         </ScrollView>
 
         <SafeAreaView edges={['bottom']} style={styles.footerSafeArea}>
           <TouchableOpacity
-            style={[styles.postButton, (isUploading || isCreatingAd || isUpdatingAd || isLoadingAd) && styles.postButtonDisabled]}
+            style={[
+              styles.postButton, 
+              (isUploading || isCreatingAd || isUpdatingAd || isLoadingAd || validationErrors.length > 0) && styles.postButtonDisabled
+            ]}
             activeOpacity={0.9}
-            disabled={isUploading || isCreatingAd || isUpdatingAd || isLoadingAd}
+            disabled={isUploading || isCreatingAd || isUpdatingAd || isLoadingAd || validationErrors.length > 0}
             onPress={handlePostAd}>
             {isUploading || isCreatingAd || isUpdatingAd ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -622,6 +783,8 @@ export default function PostAdScreen() {
                   {isUploading ? 'Uploading...' : isEditMode ? 'Updating...' : 'Posting...'}
                 </Text>
               </View>
+            ) : validationErrors.length > 0 ? (
+              <Text style={styles.postButtonText}>Fix Errors to Continue</Text>
             ) : (
               <Text style={styles.postButtonText}>{isEditMode ? 'Update Ad' : 'Post Ad'}</Text>
             )}
@@ -656,7 +819,7 @@ export default function PostAdScreen() {
                         isActive && styles.modalItemActive,
                       ]}
                       activeOpacity={0.9}
-                      onPress={() => handleSelectCategory(option.value)}>
+                      onPress={() => handleSelectCategory(option.value as AdCategory)}>
                       <Text
                         style={[
                           styles.modalItemText,
@@ -924,6 +1087,10 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSizes.xs,
     color: theme.colors.textSecondary,
   },
+  charCountError: {
+    color: '#EF4444',
+    fontWeight: '600',
+  },
   footerSafeArea: {
     paddingHorizontal: theme.spacing.lg,
     paddingBottom: theme.spacing.lg,
@@ -948,6 +1115,32 @@ const styles = StyleSheet.create({
   },
   postButtonDisabled: {
     opacity: 0.7,
+  },
+  errorContainer: {
+    backgroundColor: '#FEE2E2',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+  },
+  errorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  errorTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#EF4444',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#991B1B',
+    marginTop: 4,
+    lineHeight: 20,
   },
   modalBackdrop: {
     flex: 1,

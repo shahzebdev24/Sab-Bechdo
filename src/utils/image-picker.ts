@@ -20,7 +20,7 @@ export const requestCameraPermission = async (): Promise<boolean> => {
   if (Platform.OS === 'web') return true;
 
   const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  
+
   if (status !== 'granted') {
     Alert.alert(
       'Permission Required',
@@ -28,7 +28,7 @@ export const requestCameraPermission = async (): Promise<boolean> => {
     );
     return false;
   }
-  
+
   return true;
 };
 
@@ -39,7 +39,7 @@ export const requestMediaLibraryPermission = async (): Promise<boolean> => {
   if (Platform.OS === 'web') return true;
 
   const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  
+
   if (status !== 'granted') {
     Alert.alert(
       'Permission Required',
@@ -47,7 +47,7 @@ export const requestMediaLibraryPermission = async (): Promise<boolean> => {
     );
     return false;
   }
-  
+
   return true;
 };
 
@@ -65,6 +65,9 @@ export const pickImageFromGallery = async (): Promise<PickedImage | null> => {
       aspect: [1, 1], // Square crop for avatar
       quality: 0.8,
       allowsMultipleSelection: false,
+      // Ensure we get the file info we need
+      exif: false,
+      base64: false,
     });
 
     if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -72,16 +75,24 @@ export const pickImageFromGallery = async (): Promise<PickedImage | null> => {
     }
 
     const asset = result.assets[0];
-    
+
+    // Validate that we have a valid URI
+    if (!asset.uri) {
+      throw new Error('No image URI returned from picker');
+    }
+
     return {
       uri: asset.uri,
       fileName: asset.fileName || `photo-${Date.now()}.jpg`,
       mimeType: asset.mimeType || 'image/jpeg',
       fileSize: asset.fileSize || 0,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error picking image from gallery:', error);
-    Alert.alert('Error', 'Failed to pick image from gallery');
+    
+    // More specific error messages
+    const errorMessage = error.message || 'Failed to pick image from gallery';
+    Alert.alert('Error', errorMessage);
     return null;
   }
 };
@@ -98,6 +109,9 @@ export const takePhotoWithCamera = async (): Promise<PickedImage | null> => {
       allowsEditing: true,
       aspect: [1, 1], // Square crop for avatar
       quality: 0.8,
+      // Ensure we get the file info we need
+      exif: false,
+      base64: false,
     });
 
     if (result.canceled || !result.assets || result.assets.length === 0) {
@@ -105,16 +119,24 @@ export const takePhotoWithCamera = async (): Promise<PickedImage | null> => {
     }
 
     const asset = result.assets[0];
-    
+
+    // Validate that we have a valid URI
+    if (!asset.uri) {
+      throw new Error('No image URI returned from camera');
+    }
+
     return {
       uri: asset.uri,
       fileName: asset.fileName || `photo-${Date.now()}.jpg`,
       mimeType: asset.mimeType || 'image/jpeg',
       fileSize: asset.fileSize || 0,
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error taking photo with camera:', error);
-    Alert.alert('Error', 'Failed to take photo');
+    
+    // More specific error messages
+    const errorMessage = error.message || 'Failed to take photo';
+    Alert.alert('Error', errorMessage);
     return null;
   }
 };
@@ -152,13 +174,13 @@ export const showImagePickerOptions = (): Promise<'camera' | 'gallery' | null> =
  */
 export const createImageFormData = (image: PickedImage): FormData => {
   const formData = new FormData();
-  
+
   // @ts-ignore - FormData append accepts this format in React Native
   formData.append('files', {
     uri: image.uri,
     type: image.mimeType,
     name: image.fileName,
   });
-  
+
   return formData;
 };
