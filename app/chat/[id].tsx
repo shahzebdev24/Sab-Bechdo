@@ -16,6 +16,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import EmojiKeyboard, { type EmojiType } from 'rn-emoji-keyboard';
 import { useMessagesInfinite, useMarkConversationRead, useProfile, useConversation } from '@/src/hooks';
 import { socketClient } from '@/src/api/socket';
 import { getAvatarUrl } from '@/src/utils/avatar';
@@ -46,6 +47,7 @@ export default function IndividualChatScreen() {
     const { data: profile } = useProfile(); // Get current user profile
     
     const [message, setMessage] = useState('');
+    const [isEmojiOpen, setIsEmojiOpen] = useState(false);
     const [localMessages, setLocalMessages] = useState<Message[]>([]);
     const flatListRef = useRef<FlatList>(null);
     const queryClient = useQueryClient();
@@ -388,8 +390,15 @@ export default function IndividualChatScreen() {
                                 onChangeText={setMessage}
                             />
 
-                            <TouchableOpacity style={styles.actionIcon}>
-                                <Ionicons name="happy-outline" size={24} color="#94A3B8" />
+                            <TouchableOpacity
+                                style={styles.actionIcon}
+                                onPress={() => setIsEmojiOpen(prev => !prev)}
+                            >
+                                <Ionicons
+                                    name={isEmojiOpen ? "happy" : "happy-outline"}
+                                    size={24}
+                                    color={isEmojiOpen ? theme.colors.primary : "#94A3B8"}
+                                />
                             </TouchableOpacity>
 
                             <TouchableOpacity
@@ -404,6 +413,14 @@ export default function IndividualChatScreen() {
                     </View>
                 </View>
             </KeyboardAvoidingView>
+
+            <EmojiKeyboard
+                onEmojiSelected={(emoji: EmojiType) => setMessage(prev => prev + emoji.emoji)}
+                open={isEmojiOpen}
+                onClose={() => setIsEmojiOpen(false)}
+                enableRecentlyUsed
+                categoryPosition="top"
+            />
         </View>
     );
 }

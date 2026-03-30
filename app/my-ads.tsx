@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { router, Stack } from 'expo-router';
-import React, { useState } from 'react';
+import * as VideoThumbnails from 'expo-video-thumbnails';
+import React, { useEffect, useState } from 'react';
 import {
     FlatList,
     Image,
@@ -16,6 +17,30 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useMe, useMyAds, useDeleteAd, useUpdateAdStatus } from '@/src/hooks';
 import type { Ad, AdStatus } from '@/src/types';
 import { theme } from '@/theme';
+
+// Video ka actual frame thumbnail
+function VideoThumbnailCard({ videoUrl, style }: { videoUrl: string; style: any }) {
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function generate() {
+      try {
+        const { uri } = await VideoThumbnails.getThumbnailAsync(videoUrl, { time: 3000, quality: 0.7 });
+        if (!cancelled) setThumbnailUri(uri);
+      } catch { /* ignore */ } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    generate();
+    return () => { cancelled = true; };
+  }, [videoUrl]);
+
+  if (loading) return <View style={[style, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator size="small" color="#94A3B8" /></View>;
+  if (thumbnailUri) return <Image source={{ uri: thumbnailUri }} style={[style, { resizeMode: 'cover' }]} />;
+  return <View style={[style, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}><Ionicons name="videocam-outline" size={28} color="rgba(255,255,255,0.5)" /></View>;
+}
 
 export default function MyAdsScreen() {
     const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
@@ -177,7 +202,8 @@ export default function MyAdsScreen() {
     };
 
     const renderItem = ({ item }: { item: Ad }) => {
-        const firstImage = item.photoUrls?.[0] || item.videoUrl;
+        const hasPhoto = item.photoUrls && item.photoUrls.length > 0;
+        const hasVideo = !!item.videoUrl;
         
         return (
             <TouchableOpacity 
@@ -187,7 +213,11 @@ export default function MyAdsScreen() {
                     params: { id: item.id }
                 })}
             >
-                {firstImage && <Image source={{ uri: firstImage }} style={styles.image} />}
+                {hasPhoto ? (
+                    <Image source={{ uri: item.photoUrls![0] }} style={styles.image} />
+                ) : hasVideo ? (
+                    <VideoThumbnailCard videoUrl={item.videoUrl!} style={styles.image} />
+                ) : null}
                 <View style={styles.details}>
                     <View style={styles.statusRow}>
                         <View style={[styles.statusBadge, { backgroundColor: `${getStatusColor(item.status)}15` }]}>

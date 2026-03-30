@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import * as VideoThumbnails from 'expo-video-thumbnails';
+import React, { useEffect, useState } from 'react';
 import {
     Dimensions,
     FlatList,
@@ -17,6 +18,28 @@ import { useToggleWishlist } from '@/src/hooks/mutations/useWishlistMutations';
 import { useFollowStatus, useToggleFollow } from '@/src/hooks';
 import { getAvatarUrl } from '@/src/utils/avatar';
 import type { Ad } from '@/src/types';
+
+// Video ka actual frame thumbnail
+function VideoThumbnailCard({ videoUrl, style }: { videoUrl: string; style: any }) {
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    async function generate() {
+      try {
+        const { uri } = await VideoThumbnails.getThumbnailAsync(videoUrl, { time: 3000, quality: 0.7 });
+        if (!cancelled) setThumbnailUri(uri);
+      } catch { /* ignore */ } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    generate();
+    return () => { cancelled = true; };
+  }, [videoUrl]);
+  if (loading) return <View style={[style, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}><ActivityIndicator size="small" color="#94A3B8" /></View>;
+  if (thumbnailUri) return <Image source={{ uri: thumbnailUri }} style={[style, { resizeMode: 'cover' }]} />;
+  return <View style={[style, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}><Ionicons name="videocam-outline" size={28} color="rgba(255,255,255,0.5)" /></View>;
+}
 
 const { width } = Dimensions.get('window');
 
@@ -45,7 +68,8 @@ export default function SellerProfileScreen() {
     const isOwnProfile = currentUser?.id === id;
 
     // Wishlist functionality
-    const { toggle: toggleWishlist, isLoading: isWishlistLoading } = useToggleWishlist();
+    const { toggle: toggleWishlist } = useToggleWishlist();
+    const [wishlistLoadingId, setWishlistLoadingId] = useState<string | null>(null);
 
     const handleToggleFollow = async () => {
         if (!seller) return;
@@ -58,10 +82,14 @@ export default function SellerProfileScreen() {
     };
 
     const handleToggleWishlist = async (ad: Ad) => {
+        if (wishlistLoadingId) return;
+        setWishlistLoadingId(ad.id);
         try {
             await toggleWishlist(ad.id, ad.isFavorite || false);
         } catch (error) {
             console.error('Error toggling wishlist:', error);
+        } finally {
+            setWishlistLoadingId(null);
         }
     };
 
@@ -182,7 +210,9 @@ export default function SellerProfileScreen() {
                 ListHeaderComponent={renderHeader}
                 renderItem={({ item }: { item: Ad }) => {
                     const isFavorite = item.isFavorite || false;
-                    const firstImage = item.photoUrls?.[0] || item.videoUrl;
+                    const isThisLoading = wishlistLoadingId === item.id;
+                    const hasPhoto = item.photoUrls && item.photoUrls.length > 0;
+                    const hasVideo = !!item.videoUrl;
                     return (
                         <TouchableOpacity
                             style={styles.card}
@@ -192,14 +222,18 @@ export default function SellerProfileScreen() {
                                 params: { id: item.id }
                             })}
                         >
-                            {firstImage && <Image source={{ uri: firstImage }} style={styles.cardImage} />}
+                            {hasPhoto ? (
+                                <Image source={{ uri: item.photoUrls![0] }} style={styles.cardImage} />
+                            ) : hasVideo ? (
+                                <VideoThumbnailCard videoUrl={item.videoUrl!} style={styles.cardImage} />
+                            ) : null}
                             <TouchableOpacity
-                                style={[styles.favoriteBtn, isWishlistLoading && styles.favoriteDisabled]}
+                                style={[styles.favoriteBtn, isThisLoading && styles.favoriteDisabled]}
                                 activeOpacity={0.8}
                                 onPress={() => handleToggleWishlist(item)}
-                                disabled={isWishlistLoading}
+                                disabled={!!wishlistLoadingId}
                             >
-                                {isWishlistLoading ? (
+                                {isThisLoading ? (
                                     <ActivityIndicator size="small" color="#4A54DF" />
                                 ) : (
                                     <Ionicons

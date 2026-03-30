@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { router, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -528,7 +528,7 @@ export default function ReelScreen() {
 
         {/* Fixed Top Tabs */}
         <View style={[styles.topGradient, { paddingTop: insets.top + 10, zIndex: 100 }]}>
-          <TouchableOpacity style={styles.backBtn} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.backBtn} activeOpacity={0.7} onPress={() => router.back()}>
             <Ionicons name="chevron-back" size={28} color="#fff" />
           </TouchableOpacity>
           <View style={styles.activeTabWrap}>

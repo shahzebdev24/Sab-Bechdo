@@ -12,6 +12,7 @@ import {
   Dimensions,
   ActivityIndicator,
 } from 'react-native';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
@@ -26,7 +27,53 @@ type Listing = {
   priceLabel: string;
   locationLabel: string;
   image: { uri: string } | null;
+  isVideo: boolean;
 };
+
+// Component: Video ka actual frame thumbnail extract karo
+function VideoThumbnailCard({ videoUrl, style }: { videoUrl: string; style: any }) {
+  const [thumbnailUri, setThumbnailUri] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function generateThumbnail() {
+      try {
+        const result = await VideoThumbnails.getThumbnailAsync(videoUrl, {
+          time: 3000, // 3 second andar se frame lo (beech ke paas)
+          quality: 0.7,
+        });
+        if (!cancelled) setThumbnailUri(result.uri);
+      } catch (error) {
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    generateThumbnail();
+    return () => { cancelled = true; };
+  }, [videoUrl]);
+
+  if (loading) {
+    return (
+      <View style={[style, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}>
+        <ActivityIndicator size="small" color="#94A3B8" />
+      </View>
+    );
+  }
+
+  if (thumbnailUri) {
+    return (
+      <Image source={{ uri: thumbnailUri }} style={[style, { resizeMode: 'cover' }]} />
+    );
+  }
+
+  // Fallback: thumbnail generate nahi hua
+  return (
+    <View style={[style, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}>
+      <Ionicons name="videocam-outline" size={36} color="rgba(255,255,255,0.5)" />
+    </View>
+  );
+}
 
 // Map category names to icons
 const getCategoryIcon = (categoryName: string): keyof typeof Ionicons.glyphMap => {
@@ -257,7 +304,8 @@ export default function HomeScreen() {
       title: ad.title,
       priceLabel: `Rs ${ad.price.toLocaleString('en-PK')}`,
       locationLabel: ad.location?.address || 'Location',
-      image: (ad.photoUrls && ad.photoUrls.length > 0) ? { uri: ad.photoUrls[0] } : (ad.videoUrl ? { uri: ad.videoUrl } : null),
+      image: (ad.photoUrls && ad.photoUrls.length > 0) ? { uri: ad.photoUrls[0] } : null,
+      isVideo: (!ad.photoUrls || ad.photoUrls.length === 0) && !!ad.videoUrl,
     }));
   }, [adsData]);
 
@@ -304,6 +352,11 @@ export default function HomeScreen() {
           {item.image ? (
             <Image 
               source={item.image} 
+              style={styles.cardImage}
+            />
+          ) : item.isVideo ? (
+            <VideoThumbnailCard
+              videoUrl={adsData?.ads.find((a: Ad) => a.id === item.id)?.videoUrl || ''}
               style={styles.cardImage}
             />
           ) : (
@@ -651,6 +704,7 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#E2E8F0',
   },
+
   favoriteBadge: {
     position: 'absolute',
     top: 10,
