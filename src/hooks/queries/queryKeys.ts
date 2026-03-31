@@ -15,6 +15,7 @@ export const queryKeys = {
   users: {
     me: ['users', 'me'] as const,
     preferences: ['users', 'preferences'] as const,
+    topSellers: (limit?: number) => ['users', 'top-sellers', limit] as const,
     seller: (id: string) => ['users', 'seller', id] as const,
   },
 

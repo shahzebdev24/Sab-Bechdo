@@ -5,6 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { usersService } from '../../api';
 import { queryKeys } from './queryKeys';
+import type { TopSeller } from '../../types';
 
 /**
  * Get current user profile
@@ -29,6 +30,18 @@ export const usePreferences = (enabled = true) => {
     enabled,
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
+  });
+};
+
+/**
+ * Get top sellers ranked by activity score
+ */
+export const useTopSellers = (limit = 4, enabled = true) => {
+  return useQuery<TopSeller[]>({
+    queryKey: queryKeys.users.topSellers(limit),
+    queryFn: () => usersService.getTopSellers(limit),
+    enabled,
+    staleTime: 5 * 60 * 1000, // 5 minutes — seller rankings change slowly
   });
 };
 

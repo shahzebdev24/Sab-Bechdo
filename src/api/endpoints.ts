@@ -21,6 +21,7 @@ export const ENDPOINTS = {
   USERS: {
     ME: '/users/me',
     PREFERENCES: '/users/me/preferences',
+    TOP_SELLERS: '/users/top-sellers',
     SELLER_PROFILE: (id: string) => `/users/${id}`,
   },
 

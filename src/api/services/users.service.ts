@@ -8,6 +8,7 @@ import { ENDPOINTS } from '../endpoints';
 import type {
   User,
   SellerProfile,
+  TopSeller,
   UserPreferences,
   UpdateProfileRequest,
   UpdatePreferencesRequest,
@@ -52,6 +53,17 @@ export const updatePreferences = async (data: UpdatePreferencesRequest): Promise
   const response = await apiClient.patch<any, ApiSuccessResponse<UserPreferences>>(
     ENDPOINTS.USERS.PREFERENCES,
     data
+  );
+  return response.data;
+};
+
+/**
+ * Get top sellers (ranked by activity score)
+ */
+export const getTopSellers = async (limit = 4): Promise<TopSeller[]> => {
+  const response = await apiClient.get<any, ApiSuccessResponse<TopSeller[]>>(
+    ENDPOINTS.USERS.TOP_SELLERS,
+    { params: { limit } }
   );
   return response.data;
 };

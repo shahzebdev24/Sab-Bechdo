@@ -48,6 +48,15 @@ export interface UpdateProfileRequest {
   location?: UserLocation;
 }
 
+export interface TopSeller {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  location?: string;
+  activeAdsCount: number;
+  totalViews: number;
+}
+
 export interface UpdatePreferencesRequest {
   notifications?: {
     chat?: boolean;

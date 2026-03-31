@@ -88,6 +88,7 @@ export interface AdFilters {
   sort?: 'recent' | 'price_asc' | 'price_desc' | 'views';
   page?: number;
   limit?: number;
+  videoOnly?: boolean;
 }
 
 export interface PaginatedAdsResponse {

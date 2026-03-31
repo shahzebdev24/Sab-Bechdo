@@ -1,9 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   FlatList,
   Image,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -13,13 +14,14 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as VideoThumbnails from 'expo-video-thumbnails';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
-import { useMe, useAdsList, useToggleWishlist } from '@/src/hooks';
+import { useMe, useAdsList, useReelsList, useTopSellers, useAdsListInfinite, useReelsListInfinite } from '@/src/hooks';
 import { useCategories } from '@/src/hooks/queries/useCategories';
 import { getAvatarUrl } from '@/src/utils/avatar';
-import type { Ad } from '@/src/types';
+import type { Ad, TopSeller } from '@/src/types';
 
 type Listing = {
   id: string;
@@ -28,6 +30,9 @@ type Listing = {
   locationLabel: string;
   image: { uri: string } | null;
   isVideo: boolean;
+  videoUrl?: string;
+  ownerName?: string;
+  ownerAvatarUrl?: string;
 };
 
 // Component: Video ka actual frame thumbnail extract karo
@@ -75,6 +80,59 @@ function VideoThumbnailCard({ videoUrl, style }: { videoUrl: string; style: any 
   );
 }
 
+// Banner carousel video card — plays inline, calls onVideoEnd when finished
+function BannerVideoCard({ videoUrl, isActive, isBannerVisible, onVideoEnd, style }: {
+  videoUrl: string;
+  isActive: boolean;
+  isBannerVisible: boolean;
+  onVideoEnd: () => void;
+  style: any;
+}) {
+  const player = useVideoPlayer(videoUrl, (p) => { p.loop = false; });
+
+  // Refs to always have latest values inside useFocusEffect callback
+  const isActiveRef = useRef(isActive);
+  const isBannerVisibleRef = useRef(isBannerVisible);
+  isActiveRef.current = isActive;
+  isBannerVisibleRef.current = isBannerVisible;
+
+  useEffect(() => {
+    const sub = player.addListener('playToEnd', onVideoEnd);
+    return () => sub.remove();
+  }, [player, onVideoEnd]);
+
+  // Play/pause jab active ya visibility change ho
+  useEffect(() => {
+    if (isActive && isBannerVisible) {
+      player.currentTime = 0;
+      try { player.play(); } catch (_) {}
+    } else {
+      try { player.pause(); } catch (_) {}
+    }
+  }, [isActive, isBannerVisible, player]);
+
+  // Navigate out → pause | Navigate back → resume
+  useFocusEffect(
+    useCallback(() => {
+      if (isActiveRef.current && isBannerVisibleRef.current) {
+        try { player.play(); } catch (_) {}
+      }
+      return () => {
+        try { player.pause(); } catch (_) {}
+      };
+    }, [player])
+  );
+
+  return (
+    <VideoView
+      player={player}
+      style={style}
+      contentFit="cover"
+      nativeControls={false}
+    />
+  );
+}
+
 // Map category names to icons
 const getCategoryIcon = (categoryName: string): keyof typeof Ionicons.glyphMap => {
   const iconMap: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -92,16 +150,19 @@ const getCategoryIcon = (categoryName: string): keyof typeof Ionicons.glyphMap =
   return iconMap[categoryName] || 'apps-outline';
 };
 
-const HomeHeader = React.memo(({ 
-  searchQuery, 
-  setSearchQuery, 
-  userName, 
+const HomeHeader = React.memo(({
+  searchQuery,
+  setSearchQuery,
+  userName,
   userAvatar,
   categories,
   categoriesLoading,
   onCategoryPress,
   selectedCategory,
-}: { 
+  featuredAds,
+  isBannerVisible,
+  onBannerLayout,
+}: {
   searchQuery: string;
   setSearchQuery: (text: string) => void;
   userName?: string;
@@ -110,18 +171,44 @@ const HomeHeader = React.memo(({
   categoriesLoading: boolean;
   onCategoryPress: (categoryName: string) => void;
   selectedCategory?: string;
+  featuredAds: Listing[];
+  isBannerVisible: boolean;
+  onBannerLayout?: (bannerBottom: number) => void;
 }) => {
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
-  const keywords = categories.length > 0 
+  const [activeBannerIndex, setActiveBannerIndex] = useState(0);
+  const bannerRef = useRef<FlatList>(null);
+  const bannerIndexRef = useRef(0);
+
+  const keywords = categories.length > 0
     ? categories.slice(0, 5).map(c => c.name.toLowerCase())
     : ['mobiles', 'cars', 'property', 'jobs', 'electronics'];
 
   useEffect(() => {
     const interval = setInterval(() => {
       setPlaceholderIndex((prev) => (prev + 1) % keywords.length);
-    }, 2500); // Change every 2.5 seconds
+    }, 2500);
     return () => clearInterval(interval);
   }, []);
+
+  const goToNext = useCallback(() => {
+    if (featuredAds.length <= 1) return;
+    const next = (bannerIndexRef.current + 1) % featuredAds.length;
+    bannerIndexRef.current = next;
+    setActiveBannerIndex(next);
+    try {
+      bannerRef.current?.scrollToOffset({ offset: next * (ADS_CARD_W + ADS_CARD_GAP), animated: true });
+    } catch (_) {}
+  }, [featuredAds.length]);
+
+  // Smart auto-scroll: photos → 5s timeout, videos → wait for playToEnd
+  useEffect(() => {
+    if (featuredAds.length <= 1) return;
+    const currentAd = featuredAds[activeBannerIndex];
+    if (currentAd?.isVideo) return; // BannerVideoCard handles this via onVideoEnd
+    const timer = setTimeout(goToNext, 5000);
+    return () => clearTimeout(timer);
+  }, [activeBannerIndex, featuredAds, goToNext]);
 
   return (
     <View style={styles.headerContainer}>
@@ -168,34 +255,79 @@ const HomeHeader = React.memo(({
         </View>
       </View>
 
-      {/* Hero Promo Banner */}
-      <FlatList
-        data={[1, 2, 3]}
-        keyExtractor={(item) => item.toString()}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        pagingEnabled
-        snapToInterval={width - 48}
-        decelerationRate="fast"
-        style={styles.bannerList}
-        renderItem={({ index }) => (
-          <View style={[styles.bannerCard, { backgroundColor: index === 0 ? '#4A54DF' : index === 1 ? '#F43F5E' : '#10B981' }]}>
+      {/* Ads Banner Carousel */}
+      {featuredAds.length > 0 ? (
+        <View
+          style={styles.adsBannerWrapper}
+          onLayout={(e) => {
+            const { y, height } = e.nativeEvent.layout;
+            onBannerLayout?.(y + height);
+          }}
+        >
+          <FlatList
+            ref={bannerRef}
+            data={featuredAds}
+            keyExtractor={(item) => item.id}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            snapToInterval={ADS_CARD_W + ADS_CARD_GAP}
+            snapToAlignment="start"
+            decelerationRate="fast"
+            scrollEventThrottle={16}
+            contentContainerStyle={{ paddingLeft: 24, paddingRight: 8 }}
+            onMomentumScrollEnd={(e) => {
+              const newIndex = Math.round(e.nativeEvent.contentOffset.x / (ADS_CARD_W + ADS_CARD_GAP));
+              bannerIndexRef.current = newIndex;
+              setActiveBannerIndex(newIndex);
+            }}
+            renderItem={({ item, index }) => (
+              <TouchableOpacity
+                style={styles.adsBannerCard}
+                activeOpacity={0.92}
+                onPress={() => router.push({
+                  pathname: '/product/[id]',
+                  params: { id: item.id, title: item.title, price: item.priceLabel, location: item.locationLabel, imageUri: item.image?.uri || '' }
+                })}
+              >
+                {item.isVideo && item.videoUrl ? (
+                  <BannerVideoCard
+                    videoUrl={item.videoUrl}
+                    isActive={index === activeBannerIndex}
+                    isBannerVisible={isBannerVisible}
+                    onVideoEnd={goToNext}
+                    style={styles.adsBannerImage}
+                  />
+                ) : item.image ? (
+                  <Image source={item.image} style={styles.adsBannerImage} />
+                ) : (
+                  <View style={[styles.adsBannerImage, { backgroundColor: '#4A54DF', alignItems: 'center', justifyContent: 'center' }]}>
+                    <Ionicons name="image-outline" size={48} color="rgba(255,255,255,0.4)" />
+                  </View>
+                )}
+                {/* Light overlay so image colors stay vivid */}
+                <View style={styles.adsBannerOverlay} />
+                {/* Bottom text bar */}
+                <View style={styles.adsBannerContent}>
+                  <Text style={styles.adsBannerTitle} numberOfLines={1}>{item.title}</Text>
+                  <View style={styles.adsBannerPricePill}>
+                    <Text style={styles.adsBannerPriceText}>{item.priceLabel}</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+          />
+        </View>
+      ) : (
+        <View style={styles.bannerList}>
+          <View style={[styles.adsBannerCard, { backgroundColor: '#4A54DF' }]}>
             <View style={styles.bannerTextContainer}>
               <Text style={styles.bannerTag}>Limited Offer</Text>
               <Text style={styles.bannerTitle}>Sell Smarter,{'\n'}Buy Faster</Text>
-              <TouchableOpacity style={styles.bannerBtn}>
-                <Text style={styles.bannerBtnText}>Check It Out</Text>
-              </TouchableOpacity>
             </View>
-            <Ionicons
-              name={index === 0 ? "rocket-outline" : index === 1 ? "flash-outline" : "star-outline"}
-              size={80}
-              color="rgba(255,255,255,0.2)"
-              style={styles.bannerIcon}
-            />
+            <Ionicons name="rocket-outline" size={80} color="rgba(255,255,255,0.2)" style={styles.bannerIcon} />
           </View>
-        )}
-      />
+        </View>
+      )}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Categories</Text>
@@ -247,208 +379,463 @@ const HomeHeader = React.memo(({
         </View>
       )}
 
-      <View style={[styles.sectionHeader, { marginTop: 10 }]}>
-        <Text style={styles.sectionTitle}>Recommended for You</Text>
-      </View>
     </View>
   );
 });
 
 const { width } = Dimensions.get('window');
+const ADS_CARD_GAP = 12;
+const ADS_CARD_W = width - 88;
+
+// ─── Section Header ────────────────────────────────────────────────────────
+function SectionHeader({ title, onViewAll }: { title: string; onViewAll?: () => void }) {
+  return (
+    <View style={styles.secHeader}>
+      <View style={styles.secTitleRow}>
+        <View style={styles.secAccentBar} />
+        <Text style={styles.secTitle}>{title}</Text>
+      </View>
+      {onViewAll && (
+        <TouchableOpacity style={styles.secViewAllBtn} onPress={onViewAll} activeOpacity={0.7}>
+          <Text style={styles.secViewAllText}>View All</Text>
+          <Ionicons name="chevron-forward" size={12} color={theme.colors.primary} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
+// ─── Horizontal Product Card (single row) ─────────────────────────────────
+function HProductCard({ item, onPress }: { item: Listing; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.hCard} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.hCardImg}>
+        {item.image ? (
+          <Image source={item.image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        ) : item.isVideo && item.videoUrl ? (
+          <VideoThumbnailCard videoUrl={item.videoUrl} style={StyleSheet.absoluteFill} />
+        ) : (
+          <Ionicons name="image-outline" size={32} color="#CBD5E1" />
+        )}
+      </View>
+      <View style={styles.hCardBody}>
+        <Text style={styles.hCardPrice}>{item.priceLabel}</Text>
+        <Text style={styles.hCardTitle} numberOfLines={2}>{item.title}</Text>
+        <View style={styles.hCardLoc}>
+          <Ionicons name="location-sharp" size={10} color="#94A3B8" />
+          <Text style={styles.hCardLocText} numberOfLines={1}>{item.locationLabel}</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Grid Card (compact, for 2-row horizontal grid) ───────────────────────
+function HGridCard({ item, onPress }: { item: Listing; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.gridCard} onPress={onPress} activeOpacity={0.9}>
+      <View style={styles.gridCardImg}>
+        {item.image ? (
+          <Image source={item.image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        ) : item.isVideo && item.videoUrl ? (
+          <VideoThumbnailCard videoUrl={item.videoUrl} style={StyleSheet.absoluteFill} />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+            <Ionicons name="image-outline" size={28} color="#CBD5E1" />
+          </View>
+        )}
+        {item.isVideo && (
+          <View style={styles.gridCardVideoBadge}>
+            <Ionicons name="play" size={8} color="#fff" />
+          </View>
+        )}
+      </View>
+      <View style={styles.gridCardBody}>
+        <Text style={styles.gridCardPrice}>{item.priceLabel}</Text>
+        <Text style={styles.gridCardTitle} numberOfLines={1}>{item.title}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── 2-Row Horizontal Grid Section ────────────────────────────────────────
+function HGridSection({ data, onPress }: { data: Listing[]; onPress: (item: Listing) => void }) {
+  // Group into columns of 2
+  const columns: Listing[][] = [];
+  for (let i = 0; i < data.length; i += 2) {
+    columns.push(data.slice(i, i + 2));
+  }
+  return (
+    <FlatList
+      data={columns}
+      keyExtractor={(_, i) => 'col-' + i}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.hListContent}
+      renderItem={({ item: col }) => (
+        <View style={{ gap: 10 }}>
+          {col.map(item => (
+            <HGridCard key={item.id} item={item} onPress={() => onPress(item)} />
+          ))}
+        </View>
+      )}
+    />
+  );
+}
+
+// ─── Mini Reel Card ────────────────────────────────────────────────────────
+function MiniReelCard({ item, onPress }: { item: Listing; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.reelCard} onPress={onPress} activeOpacity={0.9}>
+      {item.videoUrl ? (
+        <VideoThumbnailCard videoUrl={item.videoUrl} style={StyleSheet.absoluteFill} />
+      ) : item.image ? (
+        <Image source={item.image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="videocam-outline" size={28} color="rgba(255,255,255,0.4)" />
+        </View>
+      )}
+      <View style={styles.reelOverlay} />
+      <View style={styles.reelPlayBtn}>
+        <Ionicons name="play-circle" size={32} color="#fff" />
+      </View>
+      <View style={styles.reelBottom}>
+        <Text style={styles.reelTitle} numberOfLines={1}>{item.title}</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Reel Tab Card (screenshot style — 2-col grid, seller overlay) ─────────
+const REEL_CARD_W = (width - 48 - 10) / 2; // 48=tabsSection paddingHorizontal(24*2), 10=gap
+
+function ReelTabCard({ item, onPress }: { item: Listing; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.reelTabCard} onPress={onPress} activeOpacity={0.9}>
+      {/* Thumbnail */}
+      {item.videoUrl ? (
+        <VideoThumbnailCard videoUrl={item.videoUrl} style={StyleSheet.absoluteFill} />
+      ) : item.image ? (
+        <Image source={item.image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1a1a2e', alignItems: 'center', justifyContent: 'center' }]}>
+          <Ionicons name="videocam-outline" size={28} color="rgba(255,255,255,0.4)" />
+        </View>
+      )}
+
+      {/* Bottom dark gradient overlay */}
+      <View style={styles.reelTabGradient} />
+
+      {/* Video play badge */}
+      {item.isVideo && (
+        <View style={styles.reelTabPlayBadge}>
+          <Ionicons name="play" size={9} color="#fff" />
+        </View>
+      )}
+
+      {/* Bottom seller info */}
+      <View style={styles.reelTabBottom}>
+        <Image
+          source={{ uri: item.ownerAvatarUrl || getAvatarUrl(item.ownerName || item.title, 32) }}
+          style={styles.reelTabAvatar}
+        />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.reelTabTitle} numberOfLines={1}>{item.title}</Text>
+          <Text style={styles.reelTabLoc} numberOfLines={1}>{item.locationLabel}</Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Top User Card ─────────────────────────────────────────────────────────
+function TopUserCard({ user, onPress }: { user: TopSeller; onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.userCard} onPress={onPress} activeOpacity={0.85}>
+      <Image source={{ uri: user.avatarUrl || getAvatarUrl(user.name, 80) }} style={styles.userAvatarImg} />
+      <Text style={styles.userName} numberOfLines={1}>{user.name}</Text>
+      <Text style={styles.userSub} numberOfLines={1}>{user.location || 'Pakistan'}</Text>
+      <View style={styles.userBadge}>
+        <Text style={styles.userBadgeText}>{user.activeAdsCount} ads</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>(undefined);
-  const [togglingAdId, setTogglingAdId] = useState<string | null>(null);
-  
-  // Fetch current user for avatar
+  const [isBannerVisible, setIsBannerVisible] = useState(true);
+  const [activeTab, setActiveTab] = useState<'products' | 'reels'>('products');
+  const bannerBottomRef = useRef(0);
+
   const { data: user } = useMe();
-  
-  // Fetch categories from backend
   const { data: categoriesData, isLoading: categoriesLoading } = useCategories();
-  
-  // Fetch ads from backend
-  const { data: adsData, isLoading } = useAdsList({
-    page: 1,
-    limit: 20,
-    sort: 'recent',
-    category: selectedCategory,
-  });
 
-  // Wishlist toggle
-  const { toggle: toggleWishlist } = useToggleWishlist();
+  // ── Section-specific queries ─────────────────────────────────────────────
+  const { data: topProductsData, isLoading: topProductsLoading } = useAdsList({ sort: 'views', limit: 8 });
+  const { data: techRushData,    isLoading: techRushLoading    } = useAdsList({ category: 'Electronics' as any, limit: 8 });
+  const { data: saverDealsData,  isLoading: saverDealsLoading  } = useAdsList({ sort: 'price_asc', limit: 8 });
+  const { data: bannerData } = useReelsList({ videoOnly: true, limit: 6 } as any);
+  const { data: reelsSectionData } = useReelsList({ videoOnly: true, limit: 10 } as any);
+  const { data: topSellersData, isLoading: topSellersLoading } = useTopSellers(4);
 
-  // Transform categories for display
+  // ── Infinite scroll for tabs ─────────────────────────────────────────────
+  const {
+    data: productsPages,
+    fetchNextPage: fetchNextProducts,
+    hasNextPage: hasNextProducts,
+    isFetchingNextPage: isFetchingProducts,
+  } = useAdsListInfinite({ limit: 12, sort: 'recent', category: selectedCategory as any });
+
+  const {
+    data: reelsPages,
+    fetchNextPage: fetchNextReels,
+    hasNextPage: hasNextReels,
+    isFetchingNextPage: isFetchingReels,
+  } = useReelsListInfinite({ limit: 12, videoOnly: true } as any);
+
+  const isLoading = topProductsLoading && techRushLoading && saverDealsLoading;
+
   const categories = React.useMemo(() => {
     if (!categoriesData) return [];
     return categoriesData.map(cat => ({
-      id: cat.id || cat._id,
+      id: cat.id,
       name: cat.name,
       icon: getCategoryIcon(cat.name),
     }));
   }, [categoriesData]);
 
-  // Handle category selection
   const handleCategoryPress = (categoryName: string) => {
     setSelectedCategory(prev => prev === categoryName ? undefined : categoryName);
   };
 
-  const listings: Listing[] = React.useMemo(() => {
-    if (!adsData?.ads) {
-      return [];
-    }
-    
-    return adsData.ads.map((ad: Ad) => ({
+  const toListings = (ads: Ad[]): Listing[] =>
+    ads.map((ad: Ad) => ({
       id: ad.id,
       title: ad.title,
       priceLabel: `Rs ${ad.price.toLocaleString('en-PK')}`,
       locationLabel: ad.location?.address || 'Location',
       image: (ad.photoUrls && ad.photoUrls.length > 0) ? { uri: ad.photoUrls[0] } : null,
       isVideo: (!ad.photoUrls || ad.photoUrls.length === 0) && !!ad.videoUrl,
+      videoUrl: ad.videoUrl,
+      ownerName: (ad.owner as any)?.name,
+      ownerAvatarUrl: (ad.owner as any)?.avatarUrl,
     }));
-  }, [adsData]);
 
-  // Filter by search query only (category filtering is done by API)
-  const filteredListings = listings.filter((item) =>
-    item.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const featuredAds  = React.useMemo(() => toListings(bannerData?.ads ?? []), [bannerData]);
+  const topProducts  = React.useMemo(() => toListings(topProductsData?.ads ?? []), [topProductsData]);
+  const techRush     = React.useMemo(() => toListings(techRushData?.ads ?? []), [techRushData]);
+  const saverDeals   = React.useMemo(() => toListings(saverDealsData?.ads ?? []), [saverDealsData]);
+  const reelSection  = React.useMemo(() => toListings(reelsSectionData?.ads ?? []), [reelsSectionData]);
+  const topSellers   = topSellersData ?? [];
 
-  // Show empty state when no results
-  const showEmptyState = !isLoading && filteredListings.length === 0;
+  // Flatten infinite pages for tabs
+  const productsTabData = React.useMemo(() =>
+    (productsPages?.pages ?? []).flatMap(p => toListings(p.ads)),
+  [productsPages]);
 
-  const toggleFavorite = async (id: string, isFavorite: boolean) => {
-    try {
-      setTogglingAdId(id);
-      await toggleWishlist(id, isFavorite);
-    } catch (error) {
-      console.error('Failed to toggle wishlist:', error);
-    } finally {
-      setTogglingAdId(null);
-    }
-  };
+  const reelsTabData = React.useMemo(() =>
+    (reelsPages?.pages ?? []).flatMap(p => toListings(p.ads)),
+  [reelsPages]);
 
-  const renderItem = ({ item }: { item: Listing }) => {
-    // Get isFavorite from backend data instead of local state
-    const ad = adsData?.ads.find((a: Ad) => a.id === item.id);
-    const isFavorite = ad?.isFavorite || false;
-    const isToggling = togglingAdId === item.id;
-    return (
-      <TouchableOpacity
-        style={styles.card}
-        activeOpacity={0.9}
-        onPress={() => router.push({
-          pathname: '/product/[id]',
-          params: {
-            id: item.id,
-            title: item.title,
-            price: item.priceLabel,
-            location: item.locationLabel,
-            imageUri: item.image?.uri || ''
-          }
-        })}
-      >
-        <View style={styles.imageContainer}>
-          {item.image ? (
-            <Image 
-              source={item.image} 
-              style={styles.cardImage}
-            />
-          ) : item.isVideo ? (
-            <VideoThumbnailCard
-              videoUrl={adsData?.ads.find((a: Ad) => a.id === item.id)?.videoUrl || ''}
-              style={styles.cardImage}
-            />
-          ) : (
-            <View style={[styles.cardImage, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}>
-              <Ionicons name="image-outline" size={48} color="#94A3B8" />
-            </View>
-          )}
-          <TouchableOpacity
-            style={styles.favoriteBadge}
-            onPress={() => toggleFavorite(item.id, isFavorite)}
-            activeOpacity={0.7}
-            disabled={isToggling}
-          >
-            {isToggling ? (
-              <ActivityIndicator size="small" color={theme.colors.primary} />
-            ) : (
-              <Ionicons
-                name={isFavorite ? "heart" : "heart-outline"}
-                size={18}
-                color={isFavorite ? '#F43F5E' : '#64748B'}
-              />
-            )}
-          </TouchableOpacity>
-        </View>
-        <View style={styles.cardDetails}>
-          <Text style={styles.priceText}>{item.priceLabel}</Text>
-          <Text style={styles.titleText} numberOfLines={1}>{item.title}</Text>
-          <View style={styles.locRow}>
-            <Ionicons name="location-sharp" size={12} color="#94A3B8" />
-            <Text style={styles.locText} numberOfLines={1}>{item.locationLabel}</Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const tabData = activeTab === 'products' ? productsTabData : reelsTabData;
+
+  const navigateToProduct = (item: Listing) =>
+    router.push({
+      pathname: '/product/[id]',
+      params: { id: item.id, title: item.title, price: item.priceLabel, location: item.locationLabel, imageUri: item.image?.uri || '' },
+    });
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <FlatList
-        key={`flatlist-${listings.length}`}
-        data={filteredListings}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={showEmptyState ? undefined : styles.columnWrapper}
-        contentContainerStyle={styles.listContent}
+      <ScrollView
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={
-          <HomeHeader 
-            searchQuery={searchQuery} 
-            setSearchQuery={setSearchQuery} 
-            userName={user?.name} 
-            userAvatar={user?.avatarUrl}
-            categories={categories}
-            categoriesLoading={categoriesLoading}
-            onCategoryPress={handleCategoryPress}
-            selectedCategory={selectedCategory}
-          />
-        }
-        renderItem={renderItem}
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={10}
-        removeClippedSubviews={false}
-        extraData={[listings, selectedCategory]}
-        ListEmptyComponent={
-          isLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={theme.colors.primary} />
-              <Text style={styles.loadingText}>Loading ads...</Text>
+        scrollEventThrottle={100}
+        onScroll={(e) => {
+          const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+          setIsBannerVisible(contentOffset.y < bannerBottomRef.current);
+          // Infinite scroll: 80% scroll pe next page fetch karo
+          const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
+          if (distanceFromBottom < 400) {
+            if (activeTab === 'products' && hasNextProducts && !isFetchingProducts) fetchNextProducts();
+            if (activeTab === 'reels' && hasNextReels && !isFetchingReels) fetchNextReels();
+          }
+        }}
+        contentContainerStyle={{ paddingBottom: 48 }}
+      >
+        <HomeHeader
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          userName={user?.name}
+          userAvatar={user?.avatarUrl}
+          categories={categories}
+          categoriesLoading={categoriesLoading}
+          onCategoryPress={handleCategoryPress}
+          selectedCategory={selectedCategory}
+          featuredAds={featuredAds}
+          isBannerVisible={isBannerVisible}
+          onBannerLayout={(bottom) => { bannerBottomRef.current = bottom; }}
+        />
+
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>Loading ads...</Text>
+          </View>
+        ) : (
+          <>
+            {/* ── Top Products (2-row horizontal grid) ──────── */}
+            <View style={styles.sectionWrapper}>
+              <SectionHeader title="Top Products" onViewAll={() => {}} />
+              {topProducts.length === 0
+                ? <Text style={styles.emptySection}>No products yet</Text>
+                : <HGridSection data={topProducts} onPress={navigateToProduct} />
+              }
             </View>
-          ) : (
-            <View style={styles.emptyContainer}>
-              <Ionicons name="search-outline" size={64} color="#CBD5E1" />
-              <Text style={styles.emptyText}>
-                {selectedCategory 
-                  ? `No ads found in "${selectedCategory}" category` 
-                  : searchQuery 
-                    ? `No items found for "${searchQuery}"` 
-                    : 'No ads available'}
-              </Text>
-              {selectedCategory && (
-                <TouchableOpacity 
-                  style={styles.clearFilterButton}
-                  onPress={() => setSelectedCategory(undefined)}
+
+            {/* ── Ultimate Tech Rush ────────────────────────── */}
+            <View style={styles.sectionWrapper}>
+              <SectionHeader title="Ultimate Tech Rush" onViewAll={() => {}} />
+              <FlatList
+                data={techRush}
+                keyExtractor={(item) => 'tr-' + item.id}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.hListContent}
+                renderItem={({ item }) => <HProductCard item={item} onPress={() => navigateToProduct(item)} />}
+                ListEmptyComponent={<Text style={styles.emptySection}>No items yet</Text>}
+              />
+            </View>
+
+            {/* ── Mini Reels ────────────────────────────────── */}
+            {reelSection.length > 0 && (
+              <View style={styles.sectionWrapper}>
+                <SectionHeader title="Latest Reels" />
+                <FlatList
+                  data={reelSection}
+                  keyExtractor={(item) => 'rl-' + item.id}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.hListContent}
+                  renderItem={({ item }) => <MiniReelCard item={item} onPress={() => router.push('/(tabs)/reel')} />}
+                />
+              </View>
+            )}
+
+            {/* ── Saver Deals ───────────────────────────────── */}
+            <View style={styles.sectionWrapper}>
+              <SectionHeader title="Saver Deals" onViewAll={() => {}} />
+              <FlatList
+                data={saverDeals}
+                keyExtractor={(item) => 'sd-' + item.id}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.hListContent}
+                renderItem={({ item }) => <HProductCard item={item} onPress={() => navigateToProduct(item)} />}
+                ListEmptyComponent={<Text style={styles.emptySection}>No deals yet</Text>}
+              />
+            </View>
+
+            {/* ── Top Sellers ───────────────────────────────── */}
+            {!topSellersLoading && topSellers.length > 0 && (
+              <View style={styles.sectionWrapper}>
+                <SectionHeader title="Top Sellers" />
+                <View style={styles.usersGrid}>
+                  {topSellers.map((u) => (
+                    <TopUserCard key={u.id} user={u} onPress={() => router.push(`/profile/${u.id}` as any)} />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* ── Reels | Products Tabs ─────────────────────── */}
+            <View style={styles.tabsSection}>
+              <View style={styles.tabsRow}>
+                <TouchableOpacity
+                  style={[styles.tabBtn, activeTab === 'products' && styles.tabBtnActive]}
+                  onPress={() => setActiveTab('products')}
                 >
-                  <Text style={styles.clearFilterText}>Clear Filter</Text>
+                  <Ionicons name="grid-outline" size={15} color={activeTab === 'products' ? '#fff' : '#64748B'} />
+                  <Text style={[styles.tabBtnText, activeTab === 'products' && styles.tabBtnTextActive]}>Products</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.tabBtn, activeTab === 'reels' && styles.tabBtnActive]}
+                  onPress={() => setActiveTab('reels')}
+                >
+                  <Ionicons name="play-circle-outline" size={15} color={activeTab === 'reels' ? '#fff' : '#64748B'} />
+                  <Text style={[styles.tabBtnText, activeTab === 'reels' && styles.tabBtnTextActive]}>Reels</Text>
+                </TouchableOpacity>
+              </View>
+
+              {(activeTab === 'products' ? productsTabData : reelsTabData).length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Ionicons name="search-outline" size={48} color="#CBD5E1" />
+                  <Text style={styles.emptyText}>
+                    {activeTab === 'reels' ? 'No reels available' : selectedCategory ? `No ads in "${selectedCategory}"` : 'No ads available'}
+                  </Text>
+                  {selectedCategory && (
+                    <TouchableOpacity style={styles.clearFilterButton} onPress={() => setSelectedCategory(undefined)}>
+                      <Text style={styles.clearFilterText}>Clear Filter</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : activeTab === 'reels' ? (
+                // ── Reels tab: 2-col portrait grid ───────────────────────
+                <View style={styles.reelTabGrid}>
+                  {reelsTabData.map((item) => (
+                    <ReelTabCard
+                      key={item.id}
+                      item={item}
+                      onPress={() => router.push('/(tabs)/reel')}
+                    />
+                  ))}
+                </View>
+              ) : (
+                // ── Products tab: existing grid ───────────────────────────
+                <View style={styles.tabGrid}>
+                  {productsTabData.map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.tabCard}
+                      activeOpacity={0.9}
+                      onPress={() => navigateToProduct(item)}
+                    >
+                      <View style={styles.tabCardImg}>
+                        {item.image ? (
+                          <Image source={item.image} style={StyleSheet.absoluteFill} resizeMode="cover" />
+                        ) : item.isVideo && item.videoUrl ? (
+                          <VideoThumbnailCard videoUrl={item.videoUrl} style={StyleSheet.absoluteFill} />
+                        ) : (
+                          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#E2E8F0', alignItems: 'center', justifyContent: 'center' }]}>
+                            <Ionicons name="image-outline" size={28} color="#94A3B8" />
+                          </View>
+                        )}
+                        {item.isVideo && (
+                          <View style={styles.tabCardPlayBadge}>
+                            <Ionicons name="play" size={10} color="#fff" />
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.tabCardBody}>
+                        <Text style={styles.tabCardPrice}>{item.priceLabel}</Text>
+                        <Text style={styles.tabCardTitle} numberOfLines={1}>{item.title}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              {(isFetchingProducts || isFetchingReels) && (
+                <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                </View>
               )}
             </View>
-          )
-        }
-      />
+          </>
+        )}
+      </ScrollView>
     </View>
   );
 }
@@ -552,6 +939,64 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  adsBannerWrapper: {
+    marginBottom: 24,
+    marginHorizontal: -24,
+  },
+  adsBannerCard: {
+    width: ADS_CARD_W,
+    height: 360,
+    borderRadius: 24,
+    marginRight: ADS_CARD_GAP,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  adsBannerImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  adsBannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderRadius: 24,
+  },
+  adsBannerContent: {
+    position: 'absolute',
+    bottom: 16,
+    alignSelf: 'center',
+    alignItems: 'center',
+    width: '80%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: theme.colors.primary + 'D0',
+    borderRadius: 32,
+  },
+  adsBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+    width: '100%',
+  },
+  adsBannerPricePill: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  adsBannerPriceText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   bannerList: {
     marginBottom: 24,
@@ -672,13 +1117,329 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     fontWeight: '500',
   },
-  listContent: {
-    paddingBottom: 40,
+  // ─── Section wrappers ────────────────────────────────────────────────────
+  sectionWrapper: {
+    marginBottom: 6,
+    marginHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    paddingTop: 16,
+    paddingBottom: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
-  columnWrapper: {
+  secHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    marginBottom: 14,
+  },
+  secTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  secAccentBar: {
+    width: 4,
+    height: 18,
+    borderRadius: 4,
+    backgroundColor: theme.colors.primary,
+  },
+  secTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E293B',
+    letterSpacing: 0.1,
+  },
+  secViewAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    backgroundColor: theme.colors.primary + '12',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  secViewAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  hListContent: {
+    paddingLeft: 16,
+    paddingRight: 12,
+    gap: 10,
+    paddingBottom: 2,
+  },
+  // ─── 2-row grid card ─────────────────────────────────────────────────────
+  gridCard: {
+    width: 155,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
+  gridCardImg: {
+    width: '100%',
+    height: 130,
+    backgroundColor: '#F1F5F9',
+  },
+  gridCardVideoBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: theme.colors.primary,
+    width: 18,
+    height: 18,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gridCardBody: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  gridCardPrice: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  gridCardTitle: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  // ─── Horizontal product card ─────────────────────────────────────────────
+  hCard: {
+    width: 150,
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  hCardImg: {
+    width: '100%',
+    height: 150,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hCardBody: {
+    padding: 10,
+  },
+  hCardPrice: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  hCardTitle: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  hCardLoc: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  hCardLocText: {
+    fontSize: 10,
+    color: '#94A3B8',
+    flex: 1,
+  },
+  // ─── Mini reel card ──────────────────────────────────────────────────────
+  reelCard: {
+    width: 130,
+    height: 220,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a2e',
+  },
+  reelOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.28)',
+  },
+  reelPlayBtn: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '38%',
+  },
+  reelBottom: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  reelTitle: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  // ─── Top users ───────────────────────────────────────────────────────────
+  usersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    gap: 10,
+  },
+  userCard: {
+    width: (width - 74) / 2,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  userAvatarImg: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: theme.colors.primary,
+  },
+  userName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+    textAlign: 'center',
+  },
+  userSub: {
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  userBadge: {
+    marginTop: 8,
+    backgroundColor: theme.colors.primary + '18',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  userBadgeText: {
+    fontSize: 11,
+    color: theme.colors.primary,
+    fontWeight: '700',
+  },
+  // ─── Bottom tabs ─────────────────────────────────────────────────────────
+  tabsSection: {
+    marginTop: 8,
     paddingHorizontal: 24,
-    gap: 16,
-    marginBottom: 20,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 16,
+    padding: 4,
+    marginBottom: 16,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  tabBtnActive: {
+    backgroundColor: theme.colors.primary,
+    shadowColor: theme.colors.primary,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  tabBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  tabBtnTextActive: {
+    color: '#fff',
+  },
+  tabGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  tabCard: {
+    width: (width - 60) / 2,
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  tabCardImg: {
+    width: '100%',
+    height: 160,
+    backgroundColor: '#F1F5F9',
+    position: 'relative',
+  },
+  tabCardPlayBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: theme.colors.primary,
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabCardBody: {
+    padding: 12,
+  },
+  tabCardPrice: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#1E293B',
+    marginBottom: 2,
+  },
+  tabCardTitle: {
+    fontSize: 11,
+    color: '#64748B',
+    fontWeight: '500',
+  },
+  emptySection: {
+    color: '#94A3B8',
+    fontSize: 13,
+    paddingVertical: 20,
+    paddingLeft: 8,
   },
   card: {
     flex: 1,
@@ -778,5 +1539,75 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // ── Reel Tab Card ──────────────────────────────────────────────────────────
+  reelTabCard: {
+    width: REEL_CARD_W,
+    height: 240,
+    borderRadius: 12,
+    overflow: 'hidden' as const,
+    backgroundColor: '#1a1a2e',
+    marginBottom: 10,
+  },
+  reelTabGradient: {
+    position: 'absolute' as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 90,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  reelTabPlayBadge: {
+    position: 'absolute' as const,
+    top: 8,
+    left: 8,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 2,
+  },
+  reelTabBottom: {
+    position: 'absolute' as const,
+    bottom: 8,
+    left: 8,
+    right: 8,
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  reelTabAvatar: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.7)',
+  },
+  reelTabTitle: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  reelTabLoc: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 10,
+  },
+  reelTabChatBtn: {
+    position: 'absolute' as const,
+    bottom: 8,
+    right: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#4A90E2',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  reelTabGrid: {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: 10,
   },
 });
