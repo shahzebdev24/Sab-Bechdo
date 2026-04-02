@@ -314,9 +314,9 @@ export default function IndividualChatScreen() {
                 </TouchableOpacity>
 
                 <View style={styles.headerRightActions}>
-                    <TouchableOpacity style={styles.iconBtn}>
+                    {/* <TouchableOpacity style={styles.iconBtn}>
                         <Ionicons name="call-outline" size={22} color="#475569" />
-                    </TouchableOpacity>
+                    </TouchableOpacity> */}
                     <TouchableOpacity style={styles.iconBtn}>
                         <Ionicons name="ellipsis-vertical" size={22} color="#475569" />
                     </TouchableOpacity>
@@ -377,9 +377,9 @@ export default function IndividualChatScreen() {
                 <View style={[styles.inputBarContainer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
                     <View style={styles.inputShadowWrapper}>
                         <View style={styles.mainInputRow}>
-                            <TouchableOpacity style={styles.actionIcon}>
+                            {/* <TouchableOpacity style={styles.actionIcon}>
                                 <Ionicons name="add-circle" size={26} color={theme.colors.primary} />
-                            </TouchableOpacity>
+                            </TouchableOpacity> */}
 
                             <TextInput
                                 style={styles.chatInput}

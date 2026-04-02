@@ -29,6 +29,7 @@ export const ENDPOINTS = {
   ADS: {
     LIST: '/ads',
     REELS: '/ads/reels',
+    REEL_DETAIL: (id: string) => `/ads/reels/${id}`,
     DETAIL: (id: string) => `/ads/${id}`,
     SELLER_ADS: (sellerId: string) => `/ads/seller/${sellerId}`,
     MY_ADS: '/ads/me',

@@ -23,7 +23,8 @@ export const queryKeys = {
   ads: {
     all: ['ads'] as const,
     list: (filters?: AdFilters) => ['ads', 'list', filters] as const,
-    reels: (filters?: Omit<AdFilters, 'sort'>) => ['ads', 'reels', filters] as const,
+    reels: (filters?: AdFilters) => ['ads', 'reels', filters] as const,
+    reelDetail: (id: string) => ['ads', 'reels', 'detail', id] as const,
     detail: (id: string) => ['ads', 'detail', id] as const,
     sellerAds: (sellerId: string, params?: any) => ['ads', 'seller', sellerId, params] as const,
     myAds: (params?: any) => ['ads', 'my-ads', params] as const,

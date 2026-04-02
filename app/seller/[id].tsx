@@ -11,11 +11,13 @@ import {
     TouchableOpacity,
     View,
     ActivityIndicator,
+    Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSellerProfile, useSellerAds, useSellerReviews, useMe } from '@/src/hooks';
 import { useToggleWishlist } from '@/src/hooks/mutations/useWishlistMutations';
 import { useFollowStatus, useToggleFollow } from '@/src/hooks';
+import { useCreateOrGetConversation } from '@/src/hooks/mutations/useChatMutations';
 import { getAvatarUrl } from '@/src/utils/avatar';
 import type { Ad } from '@/src/types';
 
@@ -70,6 +72,19 @@ export default function SellerProfileScreen() {
     // Wishlist functionality
     const { toggle: toggleWishlist } = useToggleWishlist();
     const [wishlistLoadingId, setWishlistLoadingId] = useState<string | null>(null);
+
+    // Chat — create or get conversation, then navigate
+    const { mutateAsync: createOrGetConversation, isPending: isStartingChat } = useCreateOrGetConversation();
+
+    const handleMessagePress = async () => {
+        if (!seller) return;
+        try {
+            const conversation = await createOrGetConversation({ sellerId: seller.id });
+            router.push({ pathname: '/chat/[id]', params: { id: conversation.id } });
+        } catch (error) {
+            Alert.alert('Error', 'Could not start conversation. Please try again.');
+        }
+    };
 
     const handleToggleFollow = async () => {
         if (!seller) return;
@@ -146,6 +161,7 @@ export default function SellerProfileScreen() {
                         <Text style={styles.statLabel}>Total Ads</Text>
                     </View>
                     <View style={styles.statDivider} />
+                    {/* Rating & Reviews — temporarily hidden
                     <View style={styles.statBox}>
                         <View style={styles.ratingRow}>
                             <Ionicons name="star" size={14} color="#f59e0b" style={{ marginRight: 4 }} />
@@ -153,6 +169,7 @@ export default function SellerProfileScreen() {
                         </View>
                         <Text style={styles.statLabel}>{totalReviews} Reviews</Text>
                     </View>
+                    */}
                 </View>
 
                 <View style={styles.actionRow}>
@@ -175,17 +192,14 @@ export default function SellerProfileScreen() {
                             <TouchableOpacity
                                 style={styles.secondaryButton}
                                 activeOpacity={0.8}
-                                onPress={() => router.push({
-                                    pathname: '/chat/[id]',
-                                    params: {
-                                        id: seller.id,
-                                        name: seller.name,
-                                        avatar: seller.avatarUrl,
-                                        online: 'false'
-                                    }
-                                })}
+                                onPress={handleMessagePress}
+                                disabled={isStartingChat}
                             >
-                                <Text style={styles.secondaryButtonText}>Message</Text>
+                                {isStartingChat ? (
+                                    <ActivityIndicator size="small" color="#4A54DF" />
+                                ) : (
+                                    <Text style={styles.secondaryButtonText}>Message</Text>
+                                )}
                             </TouchableOpacity>
                         </>
                     )}

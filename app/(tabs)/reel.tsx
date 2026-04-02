@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
-import { router, useRouter } from 'expo-router';
+import { router, useLocalSearchParams, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Alert,
   Dimensions,
@@ -24,7 +24,8 @@ import {
 import { GestureHandlerRootView, HandlerStateChangeEvent, State, TapGestureHandler } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useReelsListInfinite, useToggleWishlist, useToggleLike, useLikeStatus, useComments, useCreateComment, useFollowStatus, useToggleFollow, useMe } from '@/src/hooks';
+import { useReelsListInfinite, useReelDetail, useToggleWishlist, useToggleLike, useLikeStatus, useComments, useCreateComment, useFollowStatus, useToggleFollow, useMe } from '@/src/hooks';
+import { useCategories } from '@/src/hooks/queries/useCategories';
 import { getAvatarUrl } from '@/src/utils/avatar';
 import { ReelMediaCarousel } from '@/components/reels';
 import type { Ad } from '@/src/types';
@@ -43,6 +44,7 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
   const [isCommentVisible, setIsCommentVisible] = useState(false);
   const [progress, setProgress] = useState(0);
   const [commentText, setCommentText] = useState('');
+  const [isPaused, setIsPaused] = useState(false);
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   
@@ -100,13 +102,13 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
   useEffect(() => {
     if (mediaType === 'video') {
       player.loop = true;
-      if (isVisible && isFocused) {
+      if (isVisible && isFocused && !isPaused) {
         player.play();
       } else {
         player.pause();
       }
     }
-  }, [isVisible, isFocused, player, mediaType]);
+  }, [isVisible, isFocused, player, mediaType, isPaused]);
 
   const heartScale = useSharedValue(0);
   const heartOpacity = useSharedValue(0);
@@ -114,6 +116,15 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
   useEffect(() => {
     // No longer using videoRef, player is initialized with useVideoPlayer
   }, []);
+
+  const singleTapRef = useRef(null);
+  const doubleTapRef = useRef(null);
+
+  const handleSingleTap = (event: HandlerStateChangeEvent) => {
+    if (event.nativeEvent.state === State.ACTIVE && mediaType === 'video') {
+      setIsPaused(prev => !prev);
+    }
+  };
 
   const handleDoubleTap = async (event: HandlerStateChangeEvent) => {
     if (event.nativeEvent.state === State.ACTIVE) {
@@ -208,9 +219,9 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
 
   const onShare = async () => {
     try {
-      const result = await Share.share({
-        message: `Check out this ${item.title} on Sab Bechdo for ${item.currency} ${item.price.toLocaleString('en-PK')}!\n\nLocation: ${item.location?.address || 'Location'}`,
-      });
+      const deepLink = `sabbechdo://product/${item.id}`;
+      const message = `🛍️ *${item.title}*\n💰 ${item.currency} ${item.price.toLocaleString('en-PK')}\n📍 ${item.location?.address || 'Pakistan'}\n\nSab Bechdo app par dekho:\n${deepLink}`;
+      await Share.share({ message });
     } catch (error: any) {
       Alert.alert(error.message);
     }
@@ -219,20 +230,28 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
   return (
     <View style={styles.reelItem}>
       {mediaType === 'video' ? (
-        <TapGestureHandler onHandlerStateChange={handleDoubleTap} numberOfTaps={2}>
-          <View style={StyleSheet.absoluteFill}>
-            <VideoView
-              player={player}
-              style={styles.video}
-              contentFit="cover"
-              nativeControls={false}
-            />
-            <View style={styles.heartOverlay}>
-              <Animated.View style={heartStyle}>
-                <Ionicons name="heart" size={100} color="#fff" />
-              </Animated.View>
+        <TapGestureHandler ref={doubleTapRef} onHandlerStateChange={handleDoubleTap} numberOfTaps={2}>
+          <TapGestureHandler ref={singleTapRef} onHandlerStateChange={handleSingleTap} numberOfTaps={1} waitFor={doubleTapRef}>
+            <View style={StyleSheet.absoluteFill}>
+              <VideoView
+                player={player}
+                style={styles.video}
+                contentFit="cover"
+                nativeControls={false}
+              />
+              {/* Pause icon overlay */}
+              {isPaused && (
+                <View style={styles.pauseOverlay}>
+                  <Ionicons name="pause-circle" size={72} color="rgba(255,255,255,0.85)" />
+                </View>
+              )}
+              <View style={styles.heartOverlay}>
+                <Animated.View style={heartStyle}>
+                  <Ionicons name="heart" size={100} color="#fff" />
+                </Animated.View>
+              </View>
             </View>
-          </View>
+          </TapGestureHandler>
         </TapGestureHandler>
       ) : mediaType === 'images' ? (
         <>
@@ -308,10 +327,10 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
           <Text style={styles.actText}>{commentsData?.total || 0}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.actBtn} onPress={onShare}>
+        {/* <TouchableOpacity style={styles.actBtn} onPress={onShare}>
           <Ionicons name="paper-plane-outline" size={30} color="#fff" />
           <Text style={styles.actText}>Share</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         <TouchableOpacity 
           style={styles.actBtn}
@@ -455,8 +474,82 @@ const ReelItem = ({ item, isVisible }: { item: Ad; isVisible: boolean }) => {
 
 export default function ReelScreen() {
   const insets = useSafeAreaInsets();
-  const [activeId, setActiveId] = useState<string>('');
-  
+  const { initialReelId, sort, category } = useLocalSearchParams<{ initialReelId?: string; sort?: string; category?: string }>();
+  const [activeId, setActiveId] = useState<string>(initialReelId || '');
+  const flatListRef = useRef<FlatList>(null);
+  const hasScrolledRef = useRef(false);
+  const [filterVisible, setFilterVisible] = useState(false);
+
+  // Active filters (local state — user can change from within reel screen)
+  const [activeSort, setActiveSort] = useState<string | undefined>(sort);
+  const [activeCategory, setActiveCategory] = useState<string | undefined>(category);
+
+  // Pending filters — only applied when user taps Apply
+  const [pendingSort, setPendingSort] = useState<string | undefined>(sort);
+  const [pendingCategory, setPendingCategory] = useState<string | undefined>(category);
+
+  const openFilter = () => {
+    // Reset pending to current active when opening
+    setPendingSort(activeSort);
+    setPendingCategory(activeCategory);
+    setFilterVisible(true);
+  };
+
+  const applyFilter = () => {
+    setActiveSort(pendingSort);
+    setActiveCategory(pendingCategory);
+    setFilterVisible(false);
+  };
+
+  const clearFilter = () => {
+    setPendingSort(undefined);
+    setPendingCategory(undefined);
+    setActiveSort(undefined);
+    setActiveCategory(undefined);
+    setFilterVisible(false);
+  };
+
+  const pendingChanged = pendingSort !== activeSort || pendingCategory !== activeCategory;
+
+  const { data: categoriesData } = useCategories();
+  const categoryList = useMemo(() => categoriesData?.map(c => c.name) ?? [], [categoriesData]);
+
+  // initialReelId change hone pe state reset karo (back → new reel click)
+  useEffect(() => {
+    hasScrolledRef.current = false;
+    setActiveId(initialReelId || '');
+  }, [initialReelId]);
+
+  // sort/category change hone pe scroll to top + activeId reset
+  // category ko categoryList se normalize karo (case-insensitive match)
+  useEffect(() => {
+    setActiveSort(sort);
+    setPendingSort(sort);
+    if (category && categoryList.length > 0) {
+      const matched = categoryList.find(c => c.toLowerCase() === category.toLowerCase());
+      setActiveCategory(matched ?? category);
+      setPendingCategory(matched ?? category);
+    } else {
+      setActiveCategory(category);
+      setPendingCategory(category);
+    }
+    setActiveId('');
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [sort, category, categoryList]);
+
+  // Bug Fix 2: Specific reel pehle fetch karo by ID (deep-link support)
+  const { data: initialReel, isSuccess: initialReelLoaded } = useReelDetail(
+    initialReelId ?? '',
+    !!initialReelId
+  );
+
+  // Build filters from active state
+  const reelFilters = useMemo(() => ({
+    limit: 10,
+    ...(activeSort ? { sort: activeSort as 'recent' | 'price_asc' | 'price_desc' | 'views' } : {}),
+    ...(activeCategory ? { category: activeCategory as any } : {}),
+  }), [activeSort, activeCategory]);
+
   // Fetch reels from backend with infinite scroll
   const {
     data,
@@ -465,36 +558,67 @@ export default function ReelScreen() {
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
-  } = useReelsListInfinite({ limit: 10 });
+  } = useReelsListInfinite(reelFilters);
 
-  // Flatten all pages into single array
-  const reels = data?.pages.flatMap(page => page.ads) || [];
+  // Flatten all pages + inject initialReel at top (deduplicated)
+  const reels = useMemo(() => {
+    const feedReels = data?.pages.flatMap(page => page.ads) ?? [];
+    if (!initialReel) return feedReels;
+    // Duplicate avoid karo — agar feed mein already hai toh top pe move karo
+    const filtered = feedReels.filter(r => r.id !== initialReel.id);
+    return [initialReel, ...filtered];
+  }, [data, initialReel]);
 
-  // Set initial active ID
+  // Set initial active ID (no initialReelId case)
   useEffect(() => {
     if (reels.length > 0 && !activeId) {
       setActiveId(reels[0].id);
     }
   }, [reels, activeId]);
 
+  // Scroll to index 0 jab initialReel ya feed data ready ho
+  useEffect(() => {
+    if (!initialReelId || hasScrolledRef.current || reels.length === 0) return;
+    // initialReel loaded ho ya feed data aa gaya ho — dono cases mein scroll karo
+    const readyToScroll = initialReelLoaded || (data?.pages?.length ?? 0) > 0;
+    if (!readyToScroll) return;
+    hasScrolledRef.current = true;
+    setActiveId(reels[0].id);
+    flatListRef.current?.scrollToIndex({ index: 0, animated: false });
+  }, [reels, initialReelId, initialReelLoaded, data]);
+
+  // Refs — stale closure se bachne ke liye latest values track karo
+  const reelsRef = useRef(reels);
+  const hasNextPageRef = useRef(hasNextPage);
+  const isFetchingNextPageRef = useRef(isFetchingNextPage);
+  const fetchNextPageRef = useRef(fetchNextPage);
+  reelsRef.current = reels;
+  hasNextPageRef.current = hasNextPage;
+  isFetchingNextPageRef.current = isFetchingNextPage;
+  fetchNextPageRef.current = fetchNextPage;
+
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    if (viewableItems && viewableItems.length > 0) {
-      setActiveId(viewableItems[0].item.id);
+    if (!viewableItems || viewableItems.length === 0) return;
+    const currentItem = viewableItems[0].item;
+    setActiveId(currentItem.id);
+    // Last 3 reels pe pohonch jao to next page fetch karo
+    const idx = reelsRef.current.findIndex(r => r.id === currentItem.id);
+    if (idx >= reelsRef.current.length - 3 && hasNextPageRef.current && !isFetchingNextPageRef.current) {
+      fetchNextPageRef.current();
     }
   }).current;
 
-  const loadMoreReels = () => {
-    if (hasNextPage && !isFetchingNextPage) {
-      fetchNextPage();
-    }
-  };
+  // Jab specific reel click se aaya ho aur woh fetch ho rahi ho
+  const isInitialReelLoading = !!initialReelId && !initialReelLoaded && !initialReel;
 
-  // Loading state
-  if (isLoading) {
+  // Loading state — either feed loading ya specific reel loading
+  if (isLoading || isInitialReelLoading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
         <ActivityIndicator size="large" color="#4F46E5" />
-        <Text style={styles.loadingText}>Loading Reels...</Text>
+        <Text style={styles.loadingText}>
+          {isInitialReelLoading ? 'Opening Reel...' : 'Loading Reels...'}
+        </Text>
       </View>
     );
   }
@@ -513,10 +637,112 @@ export default function ReelScreen() {
   // Empty state
   if (reels.length === 0) {
     return (
-      <View style={[styles.container, styles.centerContent]}>
-        <Ionicons name="videocam-outline" size={60} color="#94a3b8" />
-        <Text style={styles.emptyText}>No reels available</Text>
-        <Text style={styles.emptySubtext}>Check back later for new content</Text>
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" translucent />
+        {/* Header with filter — taake filter remove kar sake */}
+        <View style={[styles.topGradient, { paddingTop: insets.top + 10, zIndex: 100, backgroundColor: 'rgba(0,0,0,0.85)' }]}>
+          <TouchableOpacity style={styles.backBtn} activeOpacity={0.7} onPress={() => router.back()}>
+            <Ionicons name="chevron-back" size={28} color="#fff" />
+          </TouchableOpacity>
+          <View style={styles.activeTabWrap}>
+            <Text style={styles.activeTabText}>
+              {activeCategory
+                ? activeCategory.charAt(0).toUpperCase() + activeCategory.slice(1)
+                : activeSort === 'price_asc' ? 'Saver Deals'
+                : activeSort === 'views' ? 'Top Products'
+                : 'For You'}
+            </Text>
+            <View style={styles.tabIndicator} />
+          </View>
+          <TouchableOpacity style={styles.filterBtn} activeOpacity={0.7} onPress={openFilter}>
+            <Ionicons name="options-outline" size={22} color="#fff" />
+            {(activeSort || activeCategory) && <View style={styles.filterDot} />}
+          </TouchableOpacity>
+        </View>
+
+        {/* Active filter chip */}
+        {(activeSort || activeCategory) && (
+          <View style={[styles.filterChipWrap, { top: insets.top + 60, zIndex: 99 }]}>
+            <View style={styles.filterChip}>
+              <Ionicons name="funnel" size={11} color="#fff" />
+              <Text style={styles.filterChipText}>
+                {activeCategory
+                  ? activeCategory
+                  : activeSort === 'price_asc' ? 'Lowest Price'
+                  : activeSort === 'price_desc' ? 'Highest Price'
+                  : activeSort === 'views' ? 'Most Viewed'
+                  : ''}
+              </Text>
+              <TouchableOpacity onPress={() => { setActiveSort(undefined); setActiveCategory(undefined); }}>
+                <Ionicons name="close-circle" size={14} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        <View style={styles.centerContent}>
+          <Ionicons name="videocam-outline" size={60} color="#94a3b8" />
+          <Text style={styles.emptyText}>No reels available</Text>
+          {(activeSort || activeCategory) && (
+            <TouchableOpacity
+              style={{ marginTop: 16, backgroundColor: '#4F46E5', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12 }}
+              onPress={() => { setActiveSort(undefined); setActiveCategory(undefined); }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Clear Filter</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Filter Modal */}
+        <Modal visible={filterVisible} transparent animationType="slide" onRequestClose={() => setFilterVisible(false)} statusBarTranslucent>
+          <View style={styles.filterModalOverlay}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setFilterVisible(false)} />
+            <View style={styles.filterModalSheet}>
+              <View style={styles.filterModalHandle} />
+              <Text style={styles.filterModalTitle}>Filter Reels</Text>
+              <Text style={styles.filterSectionLabel}>Sort By</Text>
+              <View style={styles.filterOptionsRow}>
+                {[
+                  { label: 'Latest', value: undefined },
+                  { label: 'Lowest Price', value: 'price_asc' },
+                  { label: 'Highest Price', value: 'price_desc' },
+                  { label: 'Most Viewed', value: 'views' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.label}
+                    style={[styles.filterChipOption, pendingSort === opt.value && styles.filterChipOptionActive]}
+                    onPress={() => setPendingSort(opt.value)}
+                  >
+                    <Text style={[styles.filterChipOptionText, pendingSort === opt.value && styles.filterChipOptionTextActive]}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {categoryList.length > 0 && (
+                <>
+                  <Text style={styles.filterSectionLabel}>Category</Text>
+                  <View style={styles.filterOptionsRow}>
+                    <TouchableOpacity style={[styles.filterChipOption, !pendingCategory && styles.filterChipOptionActive]} onPress={() => setPendingCategory(undefined)}>
+                      <Text style={[styles.filterChipOptionText, !pendingCategory && styles.filterChipOptionTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {categoryList.map(cat => (
+                      <TouchableOpacity key={cat} style={[styles.filterChipOption, pendingCategory === cat && styles.filterChipOptionActive]} onPress={() => setPendingCategory(cat)}>
+                        <Text style={[styles.filterChipOptionText, pendingCategory === cat && styles.filterChipOptionTextActive]}>{cat}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+              <View style={styles.filterModalActions}>
+                <TouchableOpacity style={styles.filterClearBtn} onPress={clearFilter}>
+                  <Text style={styles.filterClearText}>Clear All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.filterApplyBtn, !pendingChanged && styles.filterApplyBtnDisabled]} onPress={applyFilter} disabled={!pendingChanged}>
+                  <Text style={styles.filterApplyText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -526,31 +752,149 @@ export default function ReelScreen() {
       <View style={styles.container}>
         <StatusBar barStyle="light-content" translucent />
 
-        {/* Fixed Top Tabs */}
+        {/* Fixed Top Header */}
         <View style={[styles.topGradient, { paddingTop: insets.top + 10, zIndex: 100 }]}>
           <TouchableOpacity style={styles.backBtn} activeOpacity={0.7} onPress={() => router.back()}>
             <Ionicons name="chevron-back" size={28} color="#fff" />
           </TouchableOpacity>
           <View style={styles.activeTabWrap}>
-            <Text style={styles.activeTabText}>For You</Text>
+            <Text style={styles.activeTabText}>
+              {activeCategory
+                ? activeCategory.charAt(0).toUpperCase() + activeCategory.slice(1)
+                : activeSort === 'price_asc' ? 'Saver Deals'
+                : activeSort === 'views' ? 'Top Products'
+                : 'For You'}
+            </Text>
             <View style={styles.tabIndicator} />
           </View>
-          <View style={styles.headerSpacer} />
+          {/* Filter Button */}
+          <TouchableOpacity style={styles.filterBtn} activeOpacity={0.7} onPress={openFilter}>
+            <Ionicons name="options-outline" size={22} color="#fff" />
+            {(activeSort || activeCategory) && <View style={styles.filterDot} />}
+          </TouchableOpacity>
         </View>
 
+        {/* Active filter chip */}
+        {(activeSort || activeCategory) && (
+          <View style={[styles.filterChipWrap, { top: insets.top + 60, zIndex: 99 }]}>
+            <View style={styles.filterChip}>
+              <Ionicons name="funnel" size={11} color="#fff" />
+              <Text style={styles.filterChipText}>
+                {activeCategory
+                  ? activeCategory
+                  : activeSort === 'price_asc' ? 'Lowest Price'
+                  : activeSort === 'price_desc' ? 'Highest Price'
+                  : activeSort === 'views' ? 'Most Viewed'
+                  : ''}
+              </Text>
+              <TouchableOpacity onPress={() => { setActiveSort(undefined); setActiveCategory(undefined); }}>
+                <Ionicons name="close-circle" size={14} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Filter Modal */}
+        <Modal
+          visible={filterVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setFilterVisible(false)}
+          statusBarTranslucent
+        >
+          <View style={styles.filterModalOverlay}>
+            <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setFilterVisible(false)} />
+            <View style={styles.filterModalSheet}>
+              <View style={styles.filterModalHandle} />
+              <Text style={styles.filterModalTitle}>Filter Reels</Text>
+
+              {/* Sort Options */}
+              <Text style={styles.filterSectionLabel}>Sort By</Text>
+              <View style={styles.filterOptionsRow}>
+                {[
+                  { label: 'Latest', value: undefined },
+                  { label: 'Lowest Price', value: 'price_asc' },
+                  { label: 'Highest Price', value: 'price_desc' },
+                  { label: 'Most Viewed', value: 'views' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.label}
+                    style={[styles.filterChipOption, pendingSort === opt.value && styles.filterChipOptionActive]}
+                    onPress={() => setPendingSort(opt.value)}
+                  >
+                    <Text style={[styles.filterChipOptionText, pendingSort === opt.value && styles.filterChipOptionTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Category Options */}
+              {categoryList.length > 0 && (
+                <>
+                  <Text style={styles.filterSectionLabel}>Category</Text>
+                  <View style={styles.filterOptionsRow}>
+                    <TouchableOpacity
+                      style={[styles.filterChipOption, !pendingCategory && styles.filterChipOptionActive]}
+                      onPress={() => setPendingCategory(undefined)}
+                    >
+                      <Text style={[styles.filterChipOptionText, !pendingCategory && styles.filterChipOptionTextActive]}>All</Text>
+                    </TouchableOpacity>
+                    {categoryList.map(cat => (
+                      <TouchableOpacity
+                        key={cat}
+                        style={[styles.filterChipOption, pendingCategory === cat && styles.filterChipOptionActive]}
+                        onPress={() => setPendingCategory(cat)}
+                      >
+                        <Text style={[styles.filterChipOptionText, pendingCategory === cat && styles.filterChipOptionTextActive]}>
+                          {cat}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {/* Apply / Clear */}
+              <View style={styles.filterModalActions}>
+                <TouchableOpacity style={styles.filterClearBtn} onPress={clearFilter}>
+                  <Text style={styles.filterClearText}>Clear All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.filterApplyBtn, !pendingChanged && styles.filterApplyBtnDisabled]}
+                  onPress={applyFilter}
+                  disabled={!pendingChanged}
+                >
+                  <Text style={styles.filterApplyText}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         <FlatList
+          ref={flatListRef}
           data={reels}
           keyExtractor={(item) => item.id}
           pagingEnabled
           showsVerticalScrollIndicator={false}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+          onScrollToIndexFailed={({ index }) => {
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({ index, animated: false });
+            }, 300);
+          }}
           renderItem={({ item }) => (
             <View style={{ height: WINDOW_HEIGHT }}>
               <ReelItem item={item} isVisible={item.id === activeId} />
             </View>
           )}
-          onEndReached={loadMoreReels}
+          onEndReached={() => {
+            if (hasNextPageRef.current && !isFetchingNextPageRef.current) {
+              fetchNextPageRef.current();
+            }
+          }}
           onEndReachedThreshold={0.5}
           maxToRenderPerBatch={3}
           windowSize={5}
@@ -598,6 +942,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
+    pointerEvents: 'none',
+  },
+  pauseOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
     pointerEvents: 'none',
   },
   carouselLayer: {
@@ -902,6 +1253,138 @@ const styles = StyleSheet.create({
   sendBtnDisabled: {
     backgroundColor: '#94a3b8',
     opacity: 0.6,
+  },
+  // ── Filter ──────────────────────────────────────────────────────────────
+  filterBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  filterDot: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#F43F5E',
+    borderWidth: 1.5,
+    borderColor: '#000',
+  },
+  filterChipWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(79,70,229,0.85)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  filterChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  filterModalSheet: {
+    backgroundColor: '#1a1a2e',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  filterModalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  filterModalTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 20,
+  },
+  filterSectionLabel: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  filterOptionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 20,
+  },
+  filterChipOption: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  filterChipOptionActive: {
+    backgroundColor: '#4F46E5',
+    borderColor: '#4F46E5',
+  },
+  filterChipOptionText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  filterChipOptionTextActive: {
+    color: '#fff',
+  },
+  filterModalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  filterClearBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+  },
+  filterClearText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  filterApplyBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 16,
+    backgroundColor: '#4F46E5',
+    alignItems: 'center',
+  },
+  filterApplyBtnDisabled: {
+    backgroundColor: 'rgba(79,70,229,0.35)',
+  },
+  filterApplyText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
 

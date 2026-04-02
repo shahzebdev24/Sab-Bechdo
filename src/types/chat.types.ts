@@ -33,7 +33,7 @@ export interface Conversation {
   participants: User[];
   buyer: User;
   seller: User;
-  ad: ConversationAd; // Required - every conversation is about a specific ad
+  ad?: ConversationAd; // Optional — null for general (profile-based) conversations
   lastMessage?: string | Message;
   lastMessageAt?: string;
   createdAt: string;
@@ -42,7 +42,7 @@ export interface Conversation {
 
 export interface CreateConversationRequest {
   sellerId: string;
-  adId: string; // Required - must specify which ad to chat about
+  adId?: string; // Optional — omit for general (profile-based) conversations
 }
 
 export interface PaginatedConversationsResponse {

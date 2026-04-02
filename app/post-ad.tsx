@@ -45,10 +45,10 @@ export default function PostAdScreen() {
   const CATEGORY_OPTIONS = useMemo(() => {
     if (!categoriesData) return [];
     return categoriesData
-      .filter(cat => cat.isActive) // Only active categories
+      .filter(cat => cat.isActive)
       .map(cat => ({
         label: cat.name,
-        value: cat.name, // Use original name, not snake_case
+        value: cat.name, // Use original name as-is from DB
       }));
   }, [categoriesData]);
   

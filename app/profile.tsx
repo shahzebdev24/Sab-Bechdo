@@ -192,6 +192,7 @@ export default function ProfileScreen() {
                                     </Text>
                                 </View>
                                 <View style={styles.statDivider} />
+                                {/* Rating — temporarily hidden
                                 <View style={styles.statItem}>
                                     <View style={styles.ratingRow}>
                                         <Ionicons name="star" size={14} color="#2b8a3e" style={{ marginRight: 4, marginTop: -2 }} />
@@ -203,6 +204,7 @@ export default function ProfileScreen() {
                                         </Text>
                                     </View>
                                 </View>
+                                */}
                             </View>
 
                             {/* Menu Items */}

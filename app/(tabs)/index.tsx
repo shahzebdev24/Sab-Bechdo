@@ -14,7 +14,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import * as VideoThumbnails from 'expo-video-thumbnails';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { Video, ResizeMode } from 'expo-av';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { theme } from '@/theme';
@@ -88,47 +88,42 @@ function BannerVideoCard({ videoUrl, isActive, isBannerVisible, onVideoEnd, styl
   onVideoEnd: () => void;
   style: any;
 }) {
-  const player = useVideoPlayer(videoUrl, (p) => { p.loop = false; });
-
-  // Refs to always have latest values inside useFocusEffect callback
-  const isActiveRef = useRef(isActive);
-  const isBannerVisibleRef = useRef(isBannerVisible);
-  isActiveRef.current = isActive;
-  isBannerVisibleRef.current = isBannerVisible;
+  const videoRef = useRef<any>(null);
 
   useEffect(() => {
-    const sub = player.addListener('playToEnd', onVideoEnd);
-    return () => sub.remove();
-  }, [player, onVideoEnd]);
-
-  // Play/pause jab active ya visibility change ho
-  useEffect(() => {
+    if (!videoRef.current) return;
     if (isActive && isBannerVisible) {
-      player.currentTime = 0;
-      try { player.play(); } catch (_) {}
+      videoRef.current.setPositionAsync(0).then(() => {
+        videoRef.current?.playAsync();
+      }).catch(() => {});
     } else {
-      try { player.pause(); } catch (_) {}
+      videoRef.current.pauseAsync().catch(() => {});
     }
-  }, [isActive, isBannerVisible, player]);
+  }, [isActive, isBannerVisible]);
 
-  // Navigate out → pause | Navigate back → resume
   useFocusEffect(
     useCallback(() => {
-      if (isActiveRef.current && isBannerVisibleRef.current) {
-        try { player.play(); } catch (_) {}
+      if (isActive && isBannerVisible) {
+        videoRef.current?.playAsync().catch(() => {});
       }
       return () => {
-        try { player.pause(); } catch (_) {}
+        videoRef.current?.pauseAsync().catch(() => {});
       };
-    }, [player])
+    }, [isActive, isBannerVisible])
   );
 
   return (
-    <VideoView
-      player={player}
+    <Video
+      ref={videoRef}
+      source={{ uri: videoUrl }}
       style={style}
-      contentFit="cover"
-      nativeControls={false}
+      resizeMode={ResizeMode.COVER}
+      shouldPlay={isActive && isBannerVisible}
+      isLooping={false}
+      isMuted={false}
+      onPlaybackStatusUpdate={(status: any) => {
+        if (status.didJustFinish) onVideoEnd();
+      }}
     />
   );
 }
@@ -295,7 +290,7 @@ const HomeHeader = React.memo(({
                     isActive={index === activeBannerIndex}
                     isBannerVisible={isBannerVisible}
                     onVideoEnd={goToNext}
-                    style={styles.adsBannerImage}
+                    style={[StyleSheet.absoluteFill, { borderRadius: 24 }]}
                   />
                 ) : item.image ? (
                   <Image source={item.image} style={styles.adsBannerImage} />
@@ -331,9 +326,9 @@ const HomeHeader = React.memo(({
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Categories</Text>
-        <TouchableOpacity>
+        {/* <TouchableOpacity>
           <Text style={styles.viewAllText}>View All</Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       {categoriesLoading ? (
@@ -569,7 +564,10 @@ export default function HomeScreen() {
   const [selectedCategory, setSelectedCategory] = useState<string | undefined>(undefined);
   const [isBannerVisible, setIsBannerVisible] = useState(true);
   const [activeTab, setActiveTab] = useState<'products' | 'reels'>('products');
+  const [reelsFilter, setReelsFilter] = useState<{ sort?: string; category?: string }>({});
   const bannerBottomRef = useRef(0);
+  const scrollViewRef = useRef<any>(null);
+  const tabsSectionYRef = useRef(0);
 
   const { data: user } = useMe();
   const { data: categoriesData, isLoading: categoriesLoading } = useCategories();
@@ -595,7 +593,7 @@ export default function HomeScreen() {
     fetchNextPage: fetchNextReels,
     hasNextPage: hasNextReels,
     isFetchingNextPage: isFetchingReels,
-  } = useReelsListInfinite({ limit: 12, videoOnly: true } as any);
+  } = useReelsListInfinite({ limit: 12, ...(reelsFilter.sort ? { sort: reelsFilter.sort as any } : {}), ...(reelsFilter.category ? { category: reelsFilter.category as any } : {}) } as any);
 
   const isLoading = topProductsLoading && techRushLoading && saverDealsLoading;
 
@@ -609,7 +607,10 @@ export default function HomeScreen() {
   }, [categoriesData]);
 
   const handleCategoryPress = (categoryName: string) => {
-    setSelectedCategory(prev => prev === categoryName ? undefined : categoryName);
+    router.push({
+      pathname: '/(tabs)/reel',
+      params: { category: categoryName },
+    });
   };
 
   const toListings = (ads: Ad[]): Listing[] =>
@@ -625,7 +626,21 @@ export default function HomeScreen() {
       ownerAvatarUrl: (ad.owner as any)?.avatarUrl,
     }));
 
-  const featuredAds  = React.useMemo(() => toListings(bannerData?.ads ?? []), [bannerData]);
+  // Banner carousel ke liye — video priority (image bhi ho toh bhi video dikhao)
+  const toBannerListings = (ads: Ad[]): Listing[] =>
+    ads.map((ad: Ad) => ({
+      id: ad.id,
+      title: ad.title,
+      priceLabel: `Rs ${ad.price.toLocaleString('en-PK')}`,
+      locationLabel: ad.location?.address || 'Location',
+      image: (ad.photoUrls && ad.photoUrls.length > 0) ? { uri: ad.photoUrls[0] } : null,
+      isVideo: !!ad.videoUrl,
+      videoUrl: ad.videoUrl,
+      ownerName: (ad.owner as any)?.name,
+      ownerAvatarUrl: (ad.owner as any)?.avatarUrl,
+    }));
+
+  const featuredAds  = React.useMemo(() => toBannerListings(bannerData?.ads ?? []), [bannerData]);
   const topProducts  = React.useMemo(() => toListings(topProductsData?.ads ?? []), [topProductsData]);
   const techRush     = React.useMemo(() => toListings(techRushData?.ads ?? []), [techRushData]);
   const saverDeals   = React.useMemo(() => toListings(saverDealsData?.ads ?? []), [saverDealsData]);
@@ -641,17 +656,24 @@ export default function HomeScreen() {
     (reelsPages?.pages ?? []).flatMap(p => toListings(p.ads)),
   [reelsPages]);
 
-  const tabData = activeTab === 'products' ? productsTabData : reelsTabData;
-
   const navigateToProduct = (item: Listing) =>
     router.push({
       pathname: '/product/[id]',
       params: { id: item.id, title: item.title, price: item.priceLabel, location: item.locationLabel, imageUri: item.image?.uri || '' },
     });
 
+  // View All → Navigate to Reels tab (bottom nav) with filter params
+  const viewAllAsReels = (filter: { sort?: string; category?: string }) => {
+    router.push({
+      pathname: '/(tabs)/reel',
+      params: filter,
+    });
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <ScrollView
+        ref={scrollViewRef}
         showsVerticalScrollIndicator={false}
         scrollEventThrottle={100}
         onScroll={(e) => {
@@ -689,7 +711,7 @@ export default function HomeScreen() {
           <>
             {/* ── Top Products (2-row horizontal grid) ──────── */}
             <View style={styles.sectionWrapper}>
-              <SectionHeader title="Top Products" onViewAll={() => {}} />
+              <SectionHeader title="Top Products" onViewAll={() => viewAllAsReels({ sort: 'views' })} />
               {topProducts.length === 0
                 ? <Text style={styles.emptySection}>No products yet</Text>
                 : <HGridSection data={topProducts} onPress={navigateToProduct} />
@@ -698,7 +720,7 @@ export default function HomeScreen() {
 
             {/* ── Ultimate Tech Rush ────────────────────────── */}
             <View style={styles.sectionWrapper}>
-              <SectionHeader title="Ultimate Tech Rush" onViewAll={() => {}} />
+              <SectionHeader title="Ultimate Tech Rush" onViewAll={() => viewAllAsReels({ category: 'electronics' as any })} />
               <FlatList
                 data={techRush}
                 keyExtractor={(item) => 'tr-' + item.id}
@@ -720,14 +742,19 @@ export default function HomeScreen() {
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.hListContent}
-                  renderItem={({ item }) => <MiniReelCard item={item} onPress={() => router.push('/(tabs)/reel')} />}
+                  renderItem={({ item }) => (
+                    <MiniReelCard
+                      item={item}
+                      onPress={() => router.push({ pathname: '/(tabs)/reel', params: { initialReelId: item.id } })}
+                    />
+                  )}
                 />
               </View>
             )}
 
             {/* ── Saver Deals ───────────────────────────────── */}
             <View style={styles.sectionWrapper}>
-              <SectionHeader title="Saver Deals" onViewAll={() => {}} />
+              <SectionHeader title="Saver Deals" onViewAll={() => viewAllAsReels({ sort: 'price_asc' })} />
               <FlatList
                 data={saverDeals}
                 keyExtractor={(item) => 'sd-' + item.id}
@@ -745,30 +772,57 @@ export default function HomeScreen() {
                 <SectionHeader title="Top Sellers" />
                 <View style={styles.usersGrid}>
                   {topSellers.map((u) => (
-                    <TopUserCard key={u.id} user={u} onPress={() => router.push(`/profile/${u.id}` as any)} />
+                    <TopUserCard
+                      key={u.id}
+                      user={u}
+                      onPress={() => router.push({ pathname: '/seller/[id]', params: { id: u.id } })}
+                    />
                   ))}
                 </View>
               </View>
             )}
 
             {/* ── Reels | Products Tabs ─────────────────────── */}
-            <View style={styles.tabsSection}>
+            <View style={styles.tabsSection} onLayout={(e) => { tabsSectionYRef.current = e.nativeEvent.layout.y; }}>
               <View style={styles.tabsRow}>
                 <TouchableOpacity
                   style={[styles.tabBtn, activeTab === 'products' && styles.tabBtnActive]}
                   onPress={() => setActiveTab('products')}
                 >
                   <Ionicons name="grid-outline" size={15} color={activeTab === 'products' ? '#fff' : '#64748B'} />
-                  <Text style={[styles.tabBtnText, activeTab === 'products' && styles.tabBtnTextActive]}>Products</Text>
+                  <Text style={[styles.tabBtnText, activeTab === 'products' && styles.tabBtnTextActive]}>Card View</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.tabBtn, activeTab === 'reels' && styles.tabBtnActive]}
-                  onPress={() => setActiveTab('reels')}
+                  onPress={() => {
+                    setActiveTab('reels');
+                    setReelsFilter({});
+                  }}
                 >
                   <Ionicons name="play-circle-outline" size={15} color={activeTab === 'reels' ? '#fff' : '#64748B'} />
-                  <Text style={[styles.tabBtnText, activeTab === 'reels' && styles.tabBtnTextActive]}>Reels</Text>
+                  <Text style={[styles.tabBtnText, activeTab === 'reels' && styles.tabBtnTextActive]}>Reels View</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Active filter chip — reels tab mein filter active ho toh dikhao */}
+              {activeTab === 'reels' && (reelsFilter.sort || reelsFilter.category) && (
+                <View style={styles.filterChipRow}>
+                  <View style={styles.filterChip}>
+                    <Ionicons name="funnel" size={11} color={theme.colors.primary} />
+                    <Text style={styles.filterChipText}>
+                      {reelsFilter.category
+                        ? reelsFilter.category.charAt(0).toUpperCase() + reelsFilter.category.slice(1)
+                        : reelsFilter.sort === 'views' ? 'Most Viewed'
+                        : reelsFilter.sort === 'price_asc' ? 'Lowest Price'
+                        : reelsFilter.sort === 'price_desc' ? 'Highest Price'
+                        : 'Filtered'}
+                    </Text>
+                    <TouchableOpacity onPress={() => setReelsFilter({})}>
+                      <Ionicons name="close-circle" size={14} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
 
               {(activeTab === 'products' ? productsTabData : reelsTabData).length === 0 ? (
                 <View style={styles.emptyContainer}>
@@ -789,12 +843,12 @@ export default function HomeScreen() {
                     <ReelTabCard
                       key={item.id}
                       item={item}
-                      onPress={() => router.push('/(tabs)/reel')}
+                      onPress={() => router.push({ pathname: '/(tabs)/reel', params: { initialReelId: item.id } })}
                     />
                   ))}
                 </View>
               ) : (
-                // ── Products tab: existing grid ───────────────────────────
+                // ── Products tab: card grid ───────────────────────────
                 <View style={styles.tabGrid}>
                   {productsTabData.map((item) => (
                     <TouchableOpacity
@@ -833,6 +887,7 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
+
           </>
         )}
       </ScrollView>
@@ -956,6 +1011,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+    overflow: 'hidden',
   },
   adsBannerOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -997,6 +1053,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.3,
+  },
+  bannerPlayBadge: {
+    position: 'absolute',
+    top: '40%',
+    alignSelf: 'center',
+    opacity: 0.9,
   },
   bannerList: {
     marginBottom: 24,
@@ -1539,6 +1601,27 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  filterChipRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 4,
+    marginBottom: 12,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: theme.colors.primary + '15',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.primary + '30',
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.primary,
   },
   // ── Reel Tab Card ──────────────────────────────────────────────────────────
   reelTabCard: {

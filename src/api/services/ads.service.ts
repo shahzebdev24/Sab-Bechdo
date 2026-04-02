@@ -29,10 +29,21 @@ export const listAds = async (filters?: AdFilters): Promise<PaginatedAdsResponse
 /**
  * List ads with video (reels feed)
  */
-export const listReels = async (filters?: Omit<AdFilters, 'sort'>): Promise<PaginatedAdsResponse> => {
+export const listReels = async (filters?: AdFilters): Promise<PaginatedAdsResponse> => {
   const response = await apiClient.get<any, ApiSuccessResponse<PaginatedAdsResponse>>(
     ENDPOINTS.ADS.REELS,
     { params: filters }
+  );
+  return response.data;
+};
+
+/**
+ * Get single reel by ID
+ * Used for deep-linking to a specific reel from home screen
+ */
+export const getReelById = async (id: string): Promise<Ad> => {
+  const response = await apiClient.get<any, ApiSuccessResponse<Ad>>(
+    ENDPOINTS.ADS.REEL_DETAIL(id)
   );
   return response.data;
 };

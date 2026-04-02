@@ -41,7 +41,7 @@ export const useAdsListInfinite = (filters?: Omit<AdFilters, 'page'>, enabled = 
 /**
  * List reels (ads with video)
  */
-export const useReelsList = (filters?: Omit<AdFilters, 'sort'>, enabled = true) => {
+export const useReelsList = (filters?: AdFilters, enabled = true) => {
   return useQuery({
     queryKey: queryKeys.ads.reels(filters),
     queryFn: () => adsService.listReels(filters),
@@ -53,7 +53,7 @@ export const useReelsList = (filters?: Omit<AdFilters, 'sort'>, enabled = true) 
 /**
  * Infinite scroll for reels
  */
-export const useReelsListInfinite = (filters?: Omit<AdFilters, 'sort' | 'page'>, enabled = true) => {
+export const useReelsListInfinite = (filters?: AdFilters, enabled = true) => {
   return useInfiniteQuery({
     queryKey: queryKeys.ads.reels(filters),
     queryFn: ({ pageParam = 1 }) => adsService.listReels({ ...filters, page: pageParam }),
@@ -66,6 +66,20 @@ export const useReelsListInfinite = (filters?: Omit<AdFilters, 'sort' | 'page'>,
       return undefined;
     },
     staleTime: 2 * 60 * 1000,
+  });
+};
+
+/**
+ * Get single reel by ID
+ * Used for deep-linking — fetches the specific reel first,
+ * then the feed loads around it
+ */
+export const useReelDetail = (id: string, enabled = true) => {
+  return useQuery({
+    queryKey: queryKeys.ads.reelDetail(id),
+    queryFn: () => adsService.getReelById(id),
+    enabled: enabled && !!id,
+    staleTime: 3 * 60 * 1000,
   });
 };
 
